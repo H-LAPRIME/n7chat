@@ -1,21 +1,24 @@
 @import "tailwindcss";
 
+@theme {
+  --color-brand: #B91C1C; /* Vibrant Academic Crimson for light mode */
+  --color-brand-hover: #991B1B;
+  --color-accent: #B8860B; /* Darker Gold for visibility on white */
+  --color-background: #FFFFFF;
+  --color-surface: #F8FAFC; /* Slate 50 */
+  --color-border: #E2E8F0; /* Slate 200 */
+  
+  --font-sans: var(--font-inter);
+  --font-serif: var(--font-playfair);
+}
+
 /* ── Global resets ──────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
-:root {
-  --color-brand:   #6C5CE7;
-  --color-success: #00B894;
-  --color-accent:  #FDCB6E;
-  --color-danger:  #D63031;
-  --color-surface: rgba(255,255,255,0.05);
-  --color-border:  rgba(255,255,255,0.10);
-}
-
 body {
   margin: 0;
-  background: #0f0f1a;
-  color: #f0f0f5;
+  background: var(--color-background);
+  color: #0F172A; /* Slate 900 */
   -webkit-font-smoothing: antialiased;
 }
 
@@ -39,6 +42,15 @@ body {
 
 /* ── Focus ring ─────────────────────────────────────────────── */
 :focus-visible {
-  outline: 2px solid var(--color-brand);
+  outline: 2px solid #CBD5E1; /* Slate 300 */
   outline-offset: 2px;
+}
+/* ── Animations ──────────────────────────────────────────────── */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+.animate-shake {
+  animation: shake 0.2s ease-in-out 0s 2;
 }

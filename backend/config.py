@@ -47,3 +47,15 @@ class Config:
     # ── Rate Limiting ─────────────────────────────────────────
     RATELIMIT_DEFAULT: str = "60 per minute"
     RATELIMIT_STORAGE_URL: str = os.getenv("REDIS_URL", "memory://")
+
+    # ── Database ──────────────────────────────────────────────
+    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///n7chat.db")
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # ── Mail / SMTP ───────────────────────────────────────────
+    MAIL_SERVER: str = os.getenv("MAIL_SERVER", "smtp.gmail.com")
+    MAIL_PORT: int = int(os.getenv("MAIL_PORT", 587))
+    MAIL_USE_TLS: bool = os.getenv("MAIL_USE_TLS", "1") == "1"
+    MAIL_USERNAME: str = os.getenv("MAIL_USERNAME", "")
+    MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD", "")
+    MAIL_DEFAULT_SENDER: str = os.getenv("MAIL_DEFAULT_SENDER", "noreply@n7chat.com")

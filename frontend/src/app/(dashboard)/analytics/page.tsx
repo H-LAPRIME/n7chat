@@ -1,12 +1,13 @@
 /**
- * app/(dashboard)/analytics/page.tsx
- * Analytics dashboard — admin only.
+ * app/(dashboard)/analytics/analytics-page.tsx
+ * Analytics dashboard — admin only. Light academic theme.
  */
 "use client";
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { tokenStore } from "@/lib/auth";
+import { Users, AlertTriangle, TrendingUp, Search, Calendar } from "lucide-react";
 
 type AnalyticsData = {
   top_questions: string[];
@@ -25,62 +26,88 @@ export default function AnalyticsPage() {
 
   if (error)
     return (
-      <main className="min-h-screen bg-[#0f0f1a] text-white flex items-center justify-center">
-        <p className="text-[#D63031]">❌ {error}</p>
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="bg-white border border-red-100 p-6 rounded-2xl shadow-sm text-center">
+          <p className="text-red-600 font-medium"> {error}</p>
+        </div>
       </main>
     );
 
   return (
-    <main className="min-h-screen bg-[#0f0f1a] text-white p-8">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-2xl font-bold mb-8">
-          📊 <span className="text-[#FDCB6E]">Analytics</span>
-        </h1>
+    <div className="p-8 bg-white h-full text-slate-900">
+      <div className="max-w-5xl mx-auto">
+        <h1 className="text-3xl font-serif font-bold text-slate-900 mb-2">Analytique</h1>
+        <p className="text-slate-500 mb-8">Aperçu de l&apos;activité de la plateforme et maintenance du système.</p>
 
-        {/* Activity cards */}
-        <div className="grid grid-cols-2 gap-4 mb-8">
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-            <p className="text-xs text-white/40 uppercase tracking-wider mb-1">Aujourd&apos;hui</p>
-            <p className="text-4xl font-bold text-[#00B894]">
-              {data?.user_activity.today ?? "—"}
-            </p>
-            <p className="text-sm text-white/40 mt-1">utilisateurs actifs</p>
+        {/* Real Data Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md transition group">
+            <div className="flex items-center justify-between mb-4">
+              <span className="p-3 rounded-xl bg-blue-50 text-blue-600">
+                <Users size={24} />
+              </span>
+              <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                <Calendar size={12} /> Utilisateurs
+              </div>
+            </div>
+            <div className="flex items-end gap-4">
+              <div>
+                <h3 className="text-sm font-medium text-slate-500 mb-1">Aujourd&apos;hui</h3>
+                <p className="text-3xl font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
+                  {data?.user_activity.today ?? "—"}
+                </p>
+              </div>
+              <div className="h-10 w-px bg-slate-100" />
+              <div>
+                <h3 className="text-sm font-medium text-slate-500 mb-1">Cette Semaine</h3>
+                <p className="text-3xl font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
+                  {data?.user_activity.week ?? "—"}
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-            <p className="text-xs text-white/40 uppercase tracking-wider mb-1">Cette semaine</p>
-            <p className="text-4xl font-bold text-[#6C5CE7]">
-              {data?.user_activity.week ?? "—"}
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md transition group">
+            <div className="flex items-center justify-between mb-4">
+              <span className="p-3 rounded-xl bg-red-50 text-red-600">
+                <AlertTriangle size={24} />
+              </span>
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Système</div>
+            </div>
+            <h3 className="text-sm font-medium text-slate-500 mb-1">Erreurs Détectées</h3>
+            <p className="text-3xl font-bold text-red-600">
+              {data?.errors.count ?? 0}
             </p>
-            <p className="text-sm text-white/40 mt-1">utilisateurs actifs</p>
+            {data?.errors.last && (
+              <p className="mt-2 text-xs text-slate-400 italic truncate">
+                Dernière: {data.errors.last}
+              </p>
+            )}
           </div>
         </div>
 
-        {/* Top questions */}
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-5 mb-4">
-          <h2 className="font-semibold mb-3 text-white/80">🔥 Questions populaires</h2>
+        {/* Questions populaires */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm mb-8">
+          <h2 className="text-xl font-serif font-bold mb-6 flex items-center gap-2">
+            <TrendingUp className="text-brand" size={24} /> Questions populaires
+          </h2>
           {data?.top_questions.length ? (
-            <ol className="space-y-2">
+            <div className="grid grid-cols-1 gap-3">
               {data.top_questions.map((q, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-white/60">
-                  <span className="text-[#FDCB6E] font-bold w-5 shrink-0">{i + 1}.</span>
-                  {q}
-                </li>
+                <div key={i} className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 border border-slate-100 hover:border-brand/20 transition-colors group/item">
+                  <span className="text-lg font-serif font-bold text-brand w-6">{i + 1}</span>
+                  <p className="text-sm text-slate-700 font-medium flex-1">{q}</p>
+                  <Search size={16} className="text-slate-300 group-hover/item:text-brand transition-colors" />
+                </div>
               ))}
-            </ol>
+            </div>
           ) : (
-            <p className="text-sm text-white/30">Aucune donnée disponible.</p>
+            <div className="py-12 text-center text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+              <p className="text-sm italic">Aucune question enregistrée pour le moment.</p>
+            </div>
           )}
         </div>
-
-        {/* Errors */}
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-          <h2 className="font-semibold mb-3 text-white/80">⚠️ Erreurs</h2>
-          <p className="text-sm text-white/60">
-            Total : <span className="text-[#D63031] font-semibold">{data?.errors.count ?? 0}</span>
-            {data?.errors.last && ` — Dernière : ${data.errors.last}`}
-          </p>
-        </div>
       </div>
-    </main>
+    </div>
   );
 }

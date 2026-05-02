@@ -8,14 +8,10 @@ import uuid
 import bcrypt
 from sqlalchemy import Column, String, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import DeclarativeBase
+from app import db
 
 
-class Base(DeclarativeBase):
-    pass
-
-
-class User(Base):
+class User(db.Model):
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -23,6 +19,10 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="student")  # 'student' | 'admin'
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Password Reset
+    reset_code = Column(String, nullable=True)
+    reset_code_expires = Column(DateTime(timezone=True), nullable=True)
 
     def set_password(self, plain: str) -> None:
         self.password_hash = bcrypt.hashpw(

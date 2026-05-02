@@ -7,6 +7,8 @@ backend/app/routes/course_routes.py
 from flask import Blueprint, request, jsonify
 from app.auth.jwt_utils import require_auth, require_role
 
+from app.utils.recommender import get_recommendations
+
 courses_bp = Blueprint("courses", __name__)
 
 
@@ -14,8 +16,22 @@ courses_bp = Blueprint("courses", __name__)
 @require_auth
 def list_courses():
     """GET /courses — list all courses."""
-    # TODO: query STRUCTUR DB
-    return jsonify({"courses": []}), 200
+    from app.utils.recommender import MOCK_COURSES
+    return jsonify({"courses": MOCK_COURSES}), 200
+
+
+@courses_bp.get("/recommended")
+@require_auth
+def recommended_courses():
+    """GET /courses/recommended — personalized course list."""
+    # sub from JWT is used as user_id
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.split(" ")[1]
+    from app.auth.jwt_utils import decode_token
+    payload = decode_token(token)
+    
+    recs = get_recommendations(payload.get("sub", "anon"))
+    return jsonify({"recommendations": recs}), 200
 
 
 @courses_bp.post("/")

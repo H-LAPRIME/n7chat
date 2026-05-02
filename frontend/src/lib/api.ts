@@ -56,6 +56,28 @@ export const api = {
         method: "POST",
         token,
       }),
+
+    me: (token: string) =>
+      request<{
+        id: string;
+        email: string;
+        role: string;
+        name: string;
+        bio: string;
+        avatar: string;
+      }>("/auth/me", { token }),
+
+    forgotPassword: (email: string) =>
+      request<{ message: string }>("/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      }),
+
+    resetPassword: (data: { email: string; code: string; new_password: string }) =>
+      request<{ message: string }>("/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
   },
 
   // ── Chat ────────────────────────────────────────────────────
@@ -103,6 +125,9 @@ export const api = {
         method: "DELETE",
         token,
       }),
+
+    recommendations: (token: string) =>
+      request<{ recommendations: any[] }>("/courses/recommended", { token }),
   },
 
   // ── Analytics ───────────────────────────────────────────────
@@ -113,5 +138,54 @@ export const api = {
         user_activity: { today: number; week: number };
         errors: { count: number; last: string | null };
       }>("/analytics/", { token }),
+  },
+  // ── Documents ──────────────────────────────────────────────
+  documents: {
+    list: (token: string) =>
+      request<{ documents: unknown[] }>("/documents/", { token }),
+
+    upload: async (file: File, token: string) => {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`${BASE_URL}/documents/upload`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error ?? "Upload failed");
+      }
+      return res.json();
+    },
+
+    delete: (id: string, token: string) =>
+      request<{ message: string }>(`/documents/${id}`, {
+        method: "DELETE",
+        token,
+      }),
+  },
+
+  // ── Notifications ──────────────────────────────────────────
+  notifications: {
+    list: (token: string) =>
+      request<{ notifications: any[] }>("/notifications/", { token }),
+
+    markAsRead: (id: string, token: string) =>
+      request<{ message: string }>(`/notifications/read/${id}`, {
+        method: "POST",
+        token,
+      }),
+
+    broadcast: (data: { title: string; message: string; type?: string }, token: string) =>
+      request<{ message: string; notification: any }>("/notifications/broadcast", {
+        method: "POST",
+        token,
+        body: JSON.stringify(data),
+      }),
   },
 };

@@ -39,5 +39,9 @@ storage/processed/
 Thumbs.db
 
 # ── Logs ─────────────────────────────────────────────────────
-*.log
+# ── Database ──────────────────────────────────────────────
+*.db
+backend/instance/
+instance/
+
 logs/

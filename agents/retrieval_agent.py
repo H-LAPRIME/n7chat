@@ -1,7 +1,7 @@
 """
 agents/retrieval_agent.py
 ───────────────────────────
-Retrieval Agent (RAG) — FAISS + BM25 + GROQ
+Retrieval Agent (RAG) — Aiven (pgvector) + BM25 + GROQ
 Hybrid semantic + keyword search over ingested documents.
 """
 
@@ -19,7 +19,7 @@ Respond in the same language as the user's question."""
 
 
 def _bm25_rerank(query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
-    """Re-rank FAISS candidates with BM25 for hybrid search."""
+    """Re-rank pgvector candidates with BM25 for hybrid search."""
     if not candidates:
         return []
     corpus = [c["text"].split() for c in candidates]
@@ -32,7 +32,7 @@ def _bm25_rerank(query: str, candidates: list[dict], top_k: int = 5) -> list[dic
 def retrieval_node(state: AgentState) -> AgentState:
     query = state["user_message"]
 
-    # 1. FAISS vector search
+    # 1. Aiven (pgvector) vector search
     raw_candidates = search_index(query, top_k=10)
 
     # 2. BM25 re-ranking
