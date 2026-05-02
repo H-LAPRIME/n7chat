@@ -31,7 +31,6 @@ python -m venv venv
 
 # Installation des dépendances
 pip install -r requirements.txt
-pip install flask-sqlalchemy gevent-websocket
 
 # Configuration des variables d'environnement
 # Modifiez le fichier .env avec vos clés API et identifiants SMTP
