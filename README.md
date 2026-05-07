@@ -68,9 +68,14 @@ Le système intègre désormais un flux sécurisé par code à 6 chiffres :
 
 ### 🤖 Système Multi-Agents
 - **Orchestrateur** : Analyse l'intention et route vers le bon agent.
-- **RAG Agent** : Recherche intelligente dans les documents PDF via FAISS.
+- **RAG Agent** : Recherche intelligente dans les documents PDF via PostgreSQL + pgvector.
 - **Action Agent** : Gestion des inscriptions et du profil.
 - **Memory Agent** : Conservation du contexte de la conversation.
+
+### Databases
+- **STRUCTURE_DATABASE_URL / SUPABASE_DATABASE_URL** : Supabase Postgres pour les users, roles, cours, documents, conversations, notifications.
+- **VECTOR_DATABASE_URL / POSTGRES_URL** : Postgres + pgvector pour le RAG (`document_chunks`). Peut rester sur Aiven ou pointer vers Supabase si pgvector est active.
+- **Supabase Storage** : stockage des PDFs.
 
 ---
 
@@ -80,15 +85,16 @@ Le système intègre désormais un flux sécurisé par code à 6 chiffres :
 |---|---|
 | **Ingérer des PDFs** | `python scripts/ingest_documents.py --path ./storage/documents/pdfs/` |
 | **Ajouter un Admin** | `python scripts/add_enseignant.py --email nom@n7.fr --password Pass123` |
+| **Migrer les DBs** | `python scripts/migrate_structure_db.py --all` |
 | **Lancer les tests** | `pytest tests/ -v` |
 
 ---
 
 ## 📂 Structure du Monorepo
 - `frontend/` : Next.js 14, TypeScript, TailwindCSS.
-- `backend/` : Flask API, Auth JWT, SQLite (SQLAlchemy).
+- `backend/` : Flask API, Auth JWT, Supabase/Postgres (SQLAlchemy).
 - `agents/` : Orchestration LangGraph & LLMs.
-- `storage/` : Index FAISS et documents bruts.
+- `storage/` : documents bruts/traites; les embeddings sont stockes dans Postgres + pgvector.
 
 ---
 *Développé avec ❤️ par H-LAPRIME — n7chat v1.2*

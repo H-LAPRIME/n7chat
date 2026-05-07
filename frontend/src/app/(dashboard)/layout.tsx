@@ -35,7 +35,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const token = tokenStore.getAccess() ?? "";
+    try {
+      await api.auth.logout(token);
+    } catch {
+      /* ignore logout API failures */
+    }
     tokenStore.clear();
     router.push("/login");
   };

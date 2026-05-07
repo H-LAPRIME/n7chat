@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+ROOT_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT_DIR / "backend" / ".env")
 
 
 # ── LangChain wrappers (for LangGraph nodes) ──────────────────
@@ -63,3 +65,13 @@ def get_langchain_gemini():
         google_api_key=os.environ["GEMINI_API_KEY"],
         temperature=0.3,
     )
+
+
+@lru_cache(maxsize=1)
+def get_mistral_client():
+    try:
+        from mistralai.client import MistralClient
+    except ImportError:
+        from mistralai import MistralClient
+
+    return MistralClient(api_key=os.environ.get("MISTRAL_API_KEY", ""))

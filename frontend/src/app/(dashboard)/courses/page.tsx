@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { tokenStore, getUserRole } from "@/lib/auth";
-import { Book, GraduationCap, ChevronRight, Loader2, Plus, Target, Sparkles } from "lucide-react";
+import { Book, GraduationCap, ChevronRight, Loader2, Plus, Target, Sparkles, X } from "lucide-react";
 
 type Course = { id: string; title: string; description?: string };
 
@@ -16,11 +16,21 @@ export default function CoursesPage() {
   const [recommended, setRecommended] = useState<Course[]>([]);
   const [role, setRole] = useState<"student" | "admin">("student");
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<Course | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ title: "", description: "" });
+  const [error, setError] = useState("");
 
   useEffect(() => {
     const token = tokenStore.getAccess() ?? "";
     setRole(getUserRole(token) ?? "student");
-    
+
+    refreshCourses(token);
+  }, []);
+
+  async function refreshCourses(token = tokenStore.getAccess() ?? "") {
+    setLoading(true);
     Promise.all([
       api.courses.list(token),
       api.courses.recommendations(token)
@@ -29,9 +39,60 @@ export default function CoursesPage() {
         setCourses(resList.courses as Course[]);
         setRecommended(resRecs.recommendations as Course[]);
       })
-      .catch(console.error)
+      .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  function openCreateForm() {
+    setEditing(null);
+    setForm({ title: "", description: "" });
+    setError("");
+    setShowForm(true);
+  }
+
+  function openEditForm(course: Course) {
+    setEditing(course);
+    setForm({ title: course.title, description: course.description ?? "" });
+    setError("");
+    setShowForm(true);
+  }
+
+  async function saveCourse() {
+    const token = tokenStore.getAccess() ?? "";
+    if (!form.title.trim()) {
+      setError("Le titre est obligatoire.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    try {
+      if (editing) {
+        await api.courses.update(editing.id, form, token);
+      } else {
+        await api.courses.create(form, token);
+      }
+      setShowForm(false);
+      await refreshCourses(token);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteCourse(id: string) {
+    const token = tokenStore.getAccess() ?? "";
+    if (!window.confirm("Supprimer ce module ?")) return;
+
+    setError("");
+    try {
+      await api.courses.delete(id, token);
+      await refreshCourses(token);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   return (
     <div className="p-8 bg-white min-h-screen text-slate-900">
@@ -44,12 +105,57 @@ export default function CoursesPage() {
           {role === "admin" && (
             <button
               id="add-course-btn"
+              onClick={openCreateForm}
               className="flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-white hover:bg-brand-hover transition-all shadow-lg shadow-brand/10 active:scale-95"
             >
               <Plus size={18} /> Nouveau Module
             </button>
           )}
         </header>
+
+        {error && (
+          <div className="mb-6 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600">
+            {error}
+          </div>
+        )}
+
+        {showForm && role === "admin" && (
+          <section className="mb-10 rounded-2xl border border-slate-200 bg-slate-50 p-6">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-lg font-serif font-bold text-slate-900">
+                {editing ? "Modifier le module" : "Nouveau module"}
+              </h2>
+              <button
+                onClick={() => setShowForm(false)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-white hover:text-brand transition-colors"
+                aria-label="Fermer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_2fr_auto]">
+              <input
+                value={form.title}
+                onChange={(e) => setForm({ ...form, title: e.target.value })}
+                placeholder="Titre du module"
+                className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/5"
+              />
+              <input
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Description"
+                className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/5"
+              />
+              <button
+                onClick={saveCourse}
+                disabled={saving}
+                className="rounded-xl bg-brand px-6 py-3 text-sm font-bold text-white hover:bg-brand-hover disabled:opacity-40 transition-colors"
+              >
+                {saving ? "Sauvegarde..." : "Sauvegarder"}
+              </button>
+            </div>
+          </section>
+        )}
 
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 opacity-40">
@@ -129,10 +235,16 @@ export default function CoursesPage() {
                       <div className="mt-auto pt-4 border-t border-slate-50 flex items-center justify-between">
                         {role === "admin" ? (
                           <div className="flex gap-2">
-                            <button className="text-xs font-bold text-brand hover:underline">
+                            <button
+                              onClick={() => openEditForm(c)}
+                              className="text-xs font-bold text-brand hover:underline"
+                            >
                               Modifier
                             </button>
-                            <button className="text-xs font-bold text-red-600 hover:underline">
+                            <button
+                              onClick={() => deleteCourse(c.id)}
+                              className="text-xs font-bold text-red-600 hover:underline"
+                            >
                               Supprimer
                             </button>
                           </div>

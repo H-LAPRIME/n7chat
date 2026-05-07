@@ -6,19 +6,19 @@ SQLAlchemy Course and Module models.
 
 import uuid
 from sqlalchemy import Column, String, Text, ForeignKey, DateTime, func
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
-from app.models.user import Base
+from app import db
+from app.models.types import GUID
 
 
-class Course(Base):
+class Course(db.Model):
     __tablename__ = "courses"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     title = Column(String, nullable=False)
     description = Column(Text, default="")
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_by = Column(GUID(), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     modules = relationship("Module", back_populates="course", cascade="all, delete-orphan")
@@ -33,11 +33,11 @@ class Course(Base):
         }
 
 
-class Module(Base):
+class Module(db.Model):
     __tablename__ = "modules"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    course_id = Column(UUID(as_uuid=True), ForeignKey("courses.id"), nullable=False)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    course_id = Column(GUID(), ForeignKey("courses.id"), nullable=False)
     title = Column(String, nullable=False)
     content = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -53,9 +53,9 @@ class Module(Base):
         }
 
 
-class Enrollment(Base):
+class Enrollment(db.Model):
     __tablename__ = "enrollments"
 
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True)
-    course_id = Column(UUID(as_uuid=True), ForeignKey("courses.id"), primary_key=True)
+    user_id = Column(String(36), primary_key=True)
+    course_id = Column(String(36), primary_key=True)
     enrolled_at = Column(DateTime(timezone=True), server_default=func.now())

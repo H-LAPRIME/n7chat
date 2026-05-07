@@ -8,7 +8,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { tokenStore, getUserRole } from "@/lib/auth";
-import NotificationBell from "./NotificationBell";
+import { SUPABASE_LOGOS_BUCKET, supabasePublicUrl } from "@/lib/api";
 
 import { 
   MessageSquare, 
@@ -40,6 +40,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const [role, setRole] = useState<"student" | "admin">("student");
   const [collapsed, setCollapsed] = useState(false);
+  const logoSrc = supabasePublicUrl(SUPABASE_LOGOS_BUCKET, "logo_enset.png");
 
   useEffect(() => {
     const token = tokenStore.getAccess();
@@ -96,7 +97,7 @@ export default function Sidebar() {
         <div className="px-6 pb-8 pt-4 border-t border-slate-200 flex justify-center">
           <div className="w-24 h-16 flex items-center justify-center opacity-80 hover:opacity-100 transition-opacity">
             <img 
-              src="https://irvagmkpuxdeuckhawbv.supabase.co/storage/v1/object/public/logos/logo_enset.png" 
+              src={logoSrc || "https://ui-avatars.com/api/?name=ENSET&background=transparent&color=slate"} 
               alt="ENSET Logo"
               className="w-full h-full object-contain filter grayscale hover:grayscale-0 transition-all duration-500"
               onError={(e) => {

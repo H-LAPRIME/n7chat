@@ -7,17 +7,18 @@ SQLAlchemy User model with bcrypt password hashing.
 import uuid
 import bcrypt
 from sqlalchemy import Column, String, DateTime, func
-from sqlalchemy.dialects.postgresql import UUID
 from app import db
+from app.models.types import GUID
 
 
 class User(db.Model):
     __tablename__ = "users"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     email = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="student")  # 'student' | 'admin'
+    avatar_url = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Password Reset
@@ -37,5 +38,6 @@ class User(db.Model):
             "id": str(self.id),
             "email": self.email,
             "role": self.role,
+            "avatar_url": self.avatar_url,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

@@ -1,30 +1,32 @@
 /**
  * app/(dashboard)/documents/page.tsx
- * Document management page — admins can upload PDFs. Light academic theme.
+ * Document management page connected to the Flask backend.
  */
 "use client";
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { tokenStore, getUserRole } from "@/lib/auth";
-import { 
-  Upload, 
-  FileText, 
-  Search, 
-  Plus, 
-  Trash2, 
-  ExternalLink, 
+import {
+  Upload,
+  FileText,
+  Search,
+  Plus,
+  Trash2,
+  ExternalLink,
   Loader2,
-  AlertCircle
+  AlertCircle,
 } from "lucide-react";
 
-type Doc = { id: string; filename: string; created_at: string };
+type Doc = { id: string; filename: string; doc_type?: string; created_at: string };
 
 export default function DocumentsPage() {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [role, setRole] = useState<"student" | "admin">("student");
   const [loading, setLoading] = useState(true);
   const [file, setFile] = useState<File | null>(null);
+  const [docType, setDocType] = useState("autre");
+  const [query, setQuery] = useState("");
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState("");
 
@@ -34,12 +36,13 @@ export default function DocumentsPage() {
     refreshDocs(token);
   }, []);
 
-  async function refreshDocs(token: string) {
+  async function refreshDocs(token = tokenStore.getAccess() ?? "") {
+    setLoading(true);
     try {
       const res = await api.documents.list(token);
       setDocs(res.documents as Doc[]);
     } catch (e) {
-      console.error(e);
+      setStatus((e as Error).message);
     } finally {
       setLoading(false);
     }
@@ -49,18 +52,47 @@ export default function DocumentsPage() {
     if (!file) return;
     const token = tokenStore.getAccess() ?? "";
     setUploading(true);
-    setStatus("Téléchargement...");
+    setStatus("Telechargement...");
     try {
-      await api.documents.upload(file, token);
-      setStatus("Document ajouté avec succès !");
+      await api.documents.upload(file, token, docType);
+      setStatus("Document ajoute avec succes.");
       setFile(null);
-      refreshDocs(token);
+      setDocType("autre");
+      await refreshDocs(token);
     } catch (e) {
-      setStatus("Erreur lors de l'envoi");
+      setStatus((e as Error).message);
     } finally {
       setUploading(false);
     }
   }
+
+  async function openDocument(id: string) {
+    const token = tokenStore.getAccess() ?? "";
+    try {
+      const url = await api.documents.openFile(id, token);
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+  }
+
+  async function deleteDocument(id: string) {
+    const token = tokenStore.getAccess() ?? "";
+    if (!window.confirm("Supprimer ce document ?")) return;
+
+    try {
+      await api.documents.delete(id, token);
+      setStatus("Document supprime.");
+      await refreshDocs(token);
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+  }
+
+  const visibleDocs = docs.filter((doc) =>
+    doc.filename.toLowerCase().includes(query.trim().toLowerCase())
+  );
 
   return (
     <div className="p-8 bg-white h-full text-slate-900">
@@ -68,7 +100,7 @@ export default function DocumentsPage() {
         <header className="flex items-center justify-between mb-10">
           <div>
             <h1 className="text-3xl font-serif font-bold text-slate-900 mb-2">Gestion des Documents</h1>
-            <p className="text-slate-500">Consultez et gérez les ressources documentaires de l&apos;école.</p>
+            <p className="text-slate-500">Consultez et gerez les ressources documentaires de l&apos;ecole.</p>
           </div>
         </header>
 
@@ -84,7 +116,7 @@ export default function DocumentsPage() {
                     <Plus size={20} />
                   </div>
                   <span className="text-sm font-medium text-slate-500 truncate">
-                    {file ? file.name : "Cliquez pour sélectionner un PDF..."}
+                    {file ? file.name : "Cliquez pour selectionner un PDF..."}
                   </span>
                   <input
                     type="file"
@@ -97,6 +129,15 @@ export default function DocumentsPage() {
                   />
                 </div>
               </label>
+              <select
+                value={docType}
+                onChange={(e) => setDocType(e.target.value)}
+                className="w-full sm:w-44 rounded-xl border border-slate-200 bg-white px-4 py-4 text-sm font-medium text-slate-600 outline-none focus:border-brand focus:ring-4 focus:ring-brand/5"
+              >
+                <option value="autre">Autre</option>
+                <option value="cours">Cours</option>
+                <option value="reglements">Reglements</option>
+              </select>
               <button
                 onClick={handleUpload}
                 disabled={!file || uploading}
@@ -106,19 +147,22 @@ export default function DocumentsPage() {
                 {uploading ? "Envoi..." : "Uploader"}
               </button>
             </div>
-            {status && (
-              <p className={`mt-4 text-xs font-bold uppercase tracking-widest flex items-center gap-2 ${status.includes("succès") ? "text-green-600" : "text-brand"}`}>
-                <AlertCircle size={14} /> {status}
-              </p>
-            )}
           </div>
+        )}
+
+        {status && (
+          <p className="mb-6 text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-brand">
+            <AlertCircle size={14} /> {status}
+          </p>
         )}
 
         <div className="flex items-center gap-2 mb-6 p-3 rounded-xl bg-slate-100 border border-slate-200">
           <Search className="text-slate-400" size={18} />
-          <input 
-            type="text" 
-            placeholder="Rechercher un document..." 
+          <input
+            type="text"
+            placeholder="Rechercher un document..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             className="bg-transparent border-none outline-none text-sm w-full placeholder-slate-400"
           />
         </div>
@@ -132,13 +176,13 @@ export default function DocumentsPage() {
             <Loader2 className="animate-spin text-brand mb-4" size={40} />
             <p className="font-medium">Chargement des documents...</p>
           </div>
-        ) : docs.length === 0 ? (
+        ) : visibleDocs.length === 0 ? (
           <div className="text-center py-20 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
-            <p className="text-slate-400 font-medium italic">Aucun document trouvé.</p>
+            <p className="text-slate-400 font-medium italic">Aucun document trouve.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4">
-            {docs.map((d) => (
+            {visibleDocs.map((d) => (
               <div
                 key={d.id}
                 className="group flex items-center gap-4 p-5 rounded-2xl border border-slate-200 bg-white hover:shadow-lg hover:border-brand/20 transition-all duration-300"
@@ -151,15 +195,23 @@ export default function DocumentsPage() {
                     {d.filename}
                   </h3>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
-                    Uploadé le {new Date(d.created_at).toLocaleDateString()}
+                    {d.doc_type ?? "autre"} - Uploade le {new Date(d.created_at).toLocaleDateString()}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button className="p-2 rounded-lg text-slate-400 hover:text-brand hover:bg-red-50 transition-all" title="Ouvrir">
+                  <button
+                    onClick={() => openDocument(d.id)}
+                    className="p-2 rounded-lg text-slate-400 hover:text-brand hover:bg-red-50 transition-all"
+                    title="Ouvrir"
+                  >
                     <ExternalLink size={18} />
                   </button>
                   {role === "admin" && (
-                    <button className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all" title="Supprimer">
+                    <button
+                      onClick={() => deleteDocument(d.id)}
+                      className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all"
+                      title="Supprimer"
+                    >
                       <Trash2 size={18} />
                     </button>
                   )}

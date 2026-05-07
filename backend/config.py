@@ -5,9 +5,10 @@ Centralised configuration loaded from environment variables.
 """
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 
 class Config:
@@ -30,7 +31,14 @@ class Config:
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 
     # ── Databases ─────────────────────────────────────────────
-    POSTGRES_URL: str = os.getenv("POSTGRES_URL", "")
+    STRUCTURE_DATABASE_URL: str = (
+        os.getenv("STRUCTURE_DATABASE_URL")
+        or os.getenv("SUPABASE_DATABASE_URL")
+        or os.getenv("DATABASE_URL")
+        or ""
+    )
+    VECTOR_DATABASE_URL: str = os.getenv("VECTOR_DATABASE_URL") or os.getenv("POSTGRES_URL", "")
+    POSTGRES_URL: str = VECTOR_DATABASE_URL
 
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
@@ -40,6 +48,9 @@ class Config:
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
     SUPABASE_BUCKET: str = os.getenv("SUPABASE_BUCKET", "documents")
+    SUPABASE_DOCUMENTS_BUCKET: str = os.getenv("SUPABASE_DOCUMENTS_BUCKET", SUPABASE_BUCKET)
+    SUPABASE_PROFILES_BUCKET: str = os.getenv("SUPABASE_PROFILES_BUCKET", "profiles")
+    SUPABASE_LOGOS_BUCKET: str = os.getenv("SUPABASE_LOGOS_BUCKET", "logos")
 
     # ── CORS ──────────────────────────────────────────────────
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -49,7 +60,7 @@ class Config:
     RATELIMIT_STORAGE_URL: str = os.getenv("REDIS_URL", "memory://")
 
     # ── Database ──────────────────────────────────────────────
-    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///n7chat.db")
+    SQLALCHEMY_DATABASE_URI = STRUCTURE_DATABASE_URL or VECTOR_DATABASE_URL or "sqlite:///n7chat.db"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # ── Mail / SMTP ───────────────────────────────────────────

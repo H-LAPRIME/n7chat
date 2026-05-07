@@ -12,7 +12,7 @@ from flask import request, jsonify, current_app
 
 def create_access_token(user_id: str, role: str) -> str:
     payload = {
-        "sub": user_id,
+        "sub": str(user_id),
         "role": role,
         "type": "access",
         "iat": datetime.datetime.utcnow(),
@@ -24,7 +24,7 @@ def create_access_token(user_id: str, role: str) -> str:
 
 def create_refresh_token(user_id: str) -> str:
     payload = {
-        "sub": user_id,
+        "sub": str(user_id),
         "type": "refresh",
         "iat": datetime.datetime.utcnow(),
         "exp": datetime.datetime.utcnow()

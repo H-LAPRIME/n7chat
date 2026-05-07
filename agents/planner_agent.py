@@ -1,8 +1,5 @@
 """
-agents/planner_agent.py
-─────────────────────────
-Planner Agent — Gemini Flash 2.0
-Decomposes complex tasks into ordered sub-tasks.
+Planner Agent: decomposes complex tasks and dispatches simple actions.
 """
 
 from agents.state import AgentState
@@ -10,7 +7,7 @@ from agents.utils.llm_clients import get_langchain_gemini
 
 PLANNER_SYSTEM = """You are a task planner for an educational AI assistant.
 Break down the user's complex request into a numbered list of atomic sub-tasks.
-Each sub-task must map to one of: quick_answer, doc_search, action (CRUD), save.
+Each sub-task must map to one of: quick_answer, doc_search, action, save.
 Return ONLY the numbered list, no extra explanation."""
 
 
@@ -24,9 +21,18 @@ def planner_node(state: AgentState) -> AgentState:
     )
     plan = response.content.strip()
 
-    # TODO: parse plan and dispatch sub-tasks to other agents
+    if "action" in plan.lower():
+        from agents.action_agent import action_node
+
+        action_state = action_node(state)
+        return {
+            **action_state,
+            "agent_used": "planner -> action",
+            "response": f"Plan:\n{plan}\n\nExecution:\n{action_state.get('response', '')}",
+        }
+
     return {
         **state,
         "agent_used": "planner",
-        "response": f"📋 Here is my plan:\n{plan}",
+        "response": f"Plan:\n{plan}",
     }

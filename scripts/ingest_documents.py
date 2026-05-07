@@ -21,6 +21,9 @@ root_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "backend"))
 
+from dotenv import load_dotenv
+load_dotenv(root_dir / "backend" / ".env", override=True)
+
 from agents.utils.embeddings import add_chunks_to_index
 from backend.app.utils.storage import upload_document_to_supabase
 

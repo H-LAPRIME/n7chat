@@ -1,64 +1,97 @@
 """
-backend/app/routes/course_routes.py
-──────────────────────────────────────
-/courses  — CRUD for courses and modules
+Course routes: list, recommendations and admin CRUD.
 """
 
-from flask import Blueprint, request, jsonify
-from app.auth.jwt_utils import require_auth, require_role
+from flask import Blueprint, jsonify, request
 
-from app.utils.recommender import get_recommendations
+from app import db
+from app.auth.jwt_utils import require_auth, require_role
+from app.models.course import Course
+from app.utils.recommender import DEFAULT_COURSES, get_recommendations
 
 courses_bp = Blueprint("courses", __name__)
+
+
+def _seed_courses_if_empty() -> None:
+    if Course.query.count() > 0:
+        return
+    for course in DEFAULT_COURSES:
+        db.session.add(
+            Course(
+                title=course["title"],
+                description=course.get("description", f"Module {course.get('category', 'general')} - niveau {course.get('level', 'N/A')}."),
+            )
+        )
+    db.session.commit()
 
 
 @courses_bp.get("/")
 @require_auth
 def list_courses():
-    """GET /courses — list all courses."""
-    from app.utils.recommender import MOCK_COURSES
-    return jsonify({"courses": MOCK_COURSES}), 200
+    _seed_courses_if_empty()
+    courses = Course.query.order_by(Course.created_at.desc()).all()
+    return jsonify({"courses": [course.to_dict() for course in courses]}), 200
 
 
 @courses_bp.get("/recommended")
 @require_auth
 def recommended_courses():
-    """GET /courses/recommended — personalized course list."""
-    # sub from JWT is used as user_id
-    auth_header = request.headers.get("Authorization", "")
-    token = auth_header.split(" ")[1]
-    from app.auth.jwt_utils import decode_token
-    payload = decode_token(token)
-    
-    recs = get_recommendations(payload.get("sub", "anon"))
+    _seed_courses_if_empty()
+    recs = get_recommendations(request.current_user.get("sub", "anon"))
     return jsonify({"recommendations": recs}), 200
 
 
 @courses_bp.post("/")
 @require_role("admin")
 def create_course():
-    """POST /courses — create a new course (admin only)."""
     data = request.get_json(silent=True) or {}
     title = data.get("title", "").strip()
     description = data.get("description", "").strip()
+
     if not title:
         return jsonify({"error": "title is required"}), 400
-    # TODO: insert into STRUCTUR DB
-    return jsonify({"message": "Course created", "title": title}), 201
+
+    course = Course(
+        title=title,
+        description=description,
+        created_by=request.current_user.get("sub"),
+    )
+    db.session.add(course)
+    db.session.commit()
+
+    return jsonify({"message": "Course created", "course": course.to_dict()}), 201
 
 
 @courses_bp.put("/<course_id>")
 @require_role("admin")
 def update_course(course_id: str):
-    """PUT /courses/<id> — update course (admin only)."""
+    course = db.session.get(Course, course_id)
+    if not course:
+        return jsonify({"error": "Course not found"}), 404
+
     data = request.get_json(silent=True) or {}
-    # TODO: update in STRUCTUR DB
-    return jsonify({"message": "Course updated", "id": course_id}), 200
+    title = data.get("title")
+    description = data.get("description")
+
+    if title is not None:
+        title = title.strip()
+        if not title:
+            return jsonify({"error": "title cannot be empty"}), 400
+        course.title = title
+    if description is not None:
+        course.description = description.strip()
+
+    db.session.commit()
+    return jsonify({"message": "Course updated", "course": course.to_dict()}), 200
 
 
 @courses_bp.delete("/<course_id>")
 @require_role("admin")
 def delete_course(course_id: str):
-    """DELETE /courses/<id> — delete course (admin only)."""
-    # TODO: delete from STRUCTUR DB
+    course = db.session.get(Course, course_id)
+    if not course:
+        return jsonify({"error": "Course not found"}), 404
+
+    db.session.delete(course)
+    db.session.commit()
     return jsonify({"message": "Course deleted", "id": course_id}), 200

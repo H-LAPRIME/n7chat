@@ -3,7 +3,15 @@
  * Typed HTTP client for the n7chat Flask backend.
  */
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+export const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+export const SUPABASE_LOGOS_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_LOGOS_BUCKET ?? "logos";
+export const SUPABASE_PROFILES_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_PROFILES_BUCKET ?? "profiles";
+
+export function supabasePublicUrl(bucket: string, path: string) {
+  if (!SUPABASE_URL) return "";
+  return `${SUPABASE_URL.replace(/\/$/, "")}/storage/v1/object/public/${bucket}/${path.replace(/^\//, "")}`;
+}
 
 type RequestOptions = RequestInit & { token?: string };
 
@@ -67,6 +75,25 @@ export const api = {
         avatar: string;
       }>("/auth/me", { token }),
 
+    uploadAvatar: async (file: File, token: string) => {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`${BASE_URL}/auth/me/avatar`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error ?? "Avatar upload failed");
+      }
+      return res.json() as Promise<{ message: string; avatar: string }>;
+    },
+
     forgotPassword: (email: string) =>
       request<{ message: string }>("/auth/forgot-password", {
         method: "POST",
@@ -96,7 +123,7 @@ export const api = {
 
     history: (sessionId: string, token: string) =>
       request<{ session_id: string; messages: unknown[] }>(
-        `/chat/history?session_id=${sessionId}`,
+        `/chat/history?session_id=${encodeURIComponent(sessionId)}`,
         { token }
       ),
   },
@@ -107,14 +134,14 @@ export const api = {
       request<{ courses: unknown[] }>("/courses/", { token }),
 
     create: (data: { title: string; description: string }, token: string) =>
-      request<{ message: string }>("/courses/", {
+      request<{ message: string; course: unknown }>("/courses/", {
         method: "POST",
         token,
         body: JSON.stringify(data),
       }),
 
     update: (id: string, data: object, token: string) =>
-      request<{ message: string }>(`/courses/${id}`, {
+      request<{ message: string; course: unknown }>(`/courses/${id}`, {
         method: "PUT",
         token,
         body: JSON.stringify(data),
@@ -144,9 +171,10 @@ export const api = {
     list: (token: string) =>
       request<{ documents: unknown[] }>("/documents/", { token }),
 
-    upload: async (file: File, token: string) => {
+    upload: async (file: File, token: string, docType = "autre") => {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("doc_type", docType);
 
       const res = await fetch(`${BASE_URL}/documents/upload`, {
         method: "POST",
@@ -168,6 +196,21 @@ export const api = {
         method: "DELETE",
         token,
       }),
+
+    fileUrl: (id: string) => `${BASE_URL}/documents/${id}/file`,
+
+    openFile: async (id: string, token: string) => {
+      const res = await fetch(`${BASE_URL}/documents/${id}/file`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error ?? "Unable to open document");
+      }
+
+      return URL.createObjectURL(await res.blob());
+    },
   },
 
   // ── Notifications ──────────────────────────────────────────

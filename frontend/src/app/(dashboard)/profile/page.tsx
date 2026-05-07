@@ -4,7 +4,7 @@
  */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { api } from "@/lib/api";
 import { tokenStore } from "@/lib/auth";
 import { 
@@ -33,6 +33,8 @@ type UserProfile = {
 export default function ProfilePage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [avatarSaving, setAvatarSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const token = tokenStore.getAccess();
@@ -53,6 +55,23 @@ export default function ProfilePage() {
   }
 
   if (!profile) return null;
+
+  const handleAvatarChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    const token = tokenStore.getAccess();
+    if (!file || !token) return;
+
+    setAvatarSaving(true);
+    try {
+      const result = await api.auth.uploadAvatar(file, token);
+      setProfile((current) => current ? { ...current, avatar: result.avatar } : current);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setAvatarSaving(false);
+      event.target.value = "";
+    }
+  };
 
   return (
     <div className="h-full bg-white overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200">
@@ -81,7 +100,19 @@ export default function ProfilePage() {
                     }}
                   />
                 </div>
-                <button className="absolute bottom-0 right-0 p-2 bg-brand text-white rounded-full shadow-lg hover:scale-110 transition-transform active:scale-95">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={handleAvatarChange}
+                />
+                <button
+                  type="button"
+                  disabled={avatarSaving}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="absolute bottom-0 right-0 p-2 bg-brand text-white rounded-full shadow-lg hover:scale-110 transition-transform active:scale-95 disabled:opacity-60"
+                >
                   <Camera size={16} />
                 </button>
               </div>

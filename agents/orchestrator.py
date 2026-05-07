@@ -119,8 +119,8 @@ def run(user_message: str, session_id: str, user: dict) -> dict:
         "role": user.get("role", "student"),
         "user_message": user_message,
         "intent": "",
-        "short_term_history": [],
-        "long_term_summary": "",
+        "short_term_history": user.get("short_term_history", []),
+        "long_term_summary": user.get("long_term_summary", ""),
         "agent_used": "",
         "response": "",
         "sources": [],
@@ -133,3 +133,9 @@ def run(user_message: str, session_id: str, user: dict) -> dict:
         "sources": result.get("sources", []),
         "session_id": session_id,
     }
+
+import sys
+import os
+
+# Ensure the backend directory is in the Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")))

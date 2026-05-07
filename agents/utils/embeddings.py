@@ -18,9 +18,9 @@ from pgvector.sqlalchemy import Vector
 env_path = os.path.join(os.path.dirname(__file__), "..", "..", "backend", ".env")
 load_dotenv(dotenv_path=env_path)
 
-POSTGRES_URL = os.getenv("POSTGRES_URL")
+POSTGRES_URL = os.getenv("VECTOR_DATABASE_URL") or os.getenv("POSTGRES_URL")
 if not POSTGRES_URL:
-    raise ValueError("POSTGRES_URL must be set in .env")
+    raise ValueError("VECTOR_DATABASE_URL or POSTGRES_URL must be set in .env")
 
 engine = create_engine(POSTGRES_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
