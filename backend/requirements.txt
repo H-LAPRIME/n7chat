@@ -3,3 +3,7 @@ uvicorn[standard]
 python-dotenv
 psycopg[binary]
 supabase
+mistralai
+reportlab
+langchain-core
+langgraph
