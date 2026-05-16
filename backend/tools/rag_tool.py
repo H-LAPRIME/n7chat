@@ -7,7 +7,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from backend.db.vector import search_course_chunks
+from backend.db.vector import search_document_chunks
 
 try:
     from langchain_core.tools import tool
@@ -77,18 +77,28 @@ def embed_texts(texts: Sequence[str]) -> list[list[float]]:
 def vector_search(
     query: str,
     top_k: int = DEFAULT_TOP_K,
+    source_type: str | None = None,
+    source_id: str | None = None,
     module_id: str | None = None,
     course_id: str | None = None,
+    user_id: str | None = None,
     filiere: str | None = None,
+    file_type: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Embed a query and search matching course chunks in pgvector."""
+    """Embed a query and search matching document chunks in pgvector."""
     embedding = embed_text(query)
-    return search_course_chunks(
+    if course_id and not source_id:
+        source_type = "course"
+        source_id = course_id
+    return search_document_chunks(
         embedding,
         match_count=_top_k(top_k),
+        source_type=source_type,
+        source_id=source_id,
         module_id=module_id,
-        course_id=course_id,
+        user_id=user_id,
         filiere=filiere,
+        file_type=file_type,
     )
 
 
@@ -100,12 +110,13 @@ def format_rag_context(chunks: list[dict[str, Any]], max_chars: int = 6000) -> s
     parts = []
     used = 0
     for chunk in chunks:
-        title = chunk.get("title") or "Untitled"
-        module = chunk.get("module_name") or "Unknown module"
+        title = chunk.get("title") or chunk.get("source_name") or "Untitled"
+        source_type = chunk.get("source_type") or "document"
+        module = chunk.get("module_name") or chunk.get("filiere") or "general"
         similarity = chunk.get("similarity")
         score = f" | score={similarity:.3f}" if isinstance(similarity, float) else ""
         content = str(chunk.get("content") or "").strip()
-        part = f"[{title} | {module}{score}]\n{content}"
+        part = f"[{source_type}: {title} | {module}{score}]\n{content}"
         if used + len(part) > max_chars:
             break
         parts.append(part)
@@ -114,9 +125,38 @@ def format_rag_context(chunks: list[dict[str, Any]], max_chars: int = 6000) -> s
     return "\n\n---\n\n".join(parts)
 
 
+def _search_documents_payload(
+    query: str,
+    top_k: int = DEFAULT_TOP_K,
+    source_type: str | None = None,
+    source_id: str | None = None,
+    module_id: str | None = None,
+    course_id: str | None = None,
+    user_id: str | None = None,
+    filiere: str | None = None,
+    file_type: str | None = None,
+) -> dict[str, Any]:
+    chunks = vector_search(
+        query,
+        top_k=top_k,
+        source_type=source_type,
+        source_id=source_id,
+        module_id=module_id,
+        course_id=course_id,
+        user_id=user_id,
+        filiere=filiere,
+        file_type=file_type,
+    )
+    return _success(
+        chunks,
+        row_count=len(chunks),
+        context=format_rag_context(chunks),
+    )
+
+
 @tool
 def embed_text_for_rag(text: str) -> dict[str, Any]:
-    """Create an embedding for a query or course chunk."""
+    """Create an embedding for a query or document chunk."""
     try:
         embedding = embed_text(text)
         return _success(
@@ -129,6 +169,35 @@ def embed_text_for_rag(text: str) -> dict[str, Any]:
 
 
 @tool
+def search_documents(
+    query: str,
+    top_k: int = DEFAULT_TOP_K,
+    source_type: str | None = None,
+    source_id: str | None = None,
+    module_id: str | None = None,
+    course_id: str | None = None,
+    user_id: str | None = None,
+    filiere: str | None = None,
+    file_type: str | None = None,
+) -> dict[str, Any]:
+    """Search indexed documents semantically and return matching content."""
+    try:
+        return _search_documents_payload(
+            query,
+            top_k=top_k,
+            source_type=source_type,
+            source_id=source_id,
+            module_id=module_id,
+            course_id=course_id,
+            user_id=user_id,
+            filiere=filiere,
+            file_type=file_type,
+        )
+    except Exception as exc:
+        return _failure(exc, row_count=0, context="")
+
+
+@tool
 def search_course_content(
     query: str,
     top_k: int = DEFAULT_TOP_K,
@@ -136,22 +205,41 @@ def search_course_content(
     course_id: str | None = None,
     filiere: str | None = None,
 ) -> dict[str, Any]:
-    """Search course chunks semantically and return matching content."""
+    """Compatibility tool: search only indexed course documents."""
     try:
-        chunks = vector_search(
-            query,
+        return _search_documents_payload(
+            query=query,
             top_k=top_k,
+            source_type="course",
+            source_id=course_id,
             module_id=module_id,
-            course_id=course_id,
             filiere=filiere,
-        )
-        return _success(
-            chunks,
-            row_count=len(chunks),
-            context=format_rag_context(chunks),
         )
     except Exception as exc:
         return _failure(exc, row_count=0, context="")
+
+
+def search_document_content(
+    query: str,
+    top_k: int = DEFAULT_TOP_K,
+    source_type: str | None = None,
+    source_id: str | None = None,
+    module_id: str | None = None,
+    user_id: str | None = None,
+    filiere: str | None = None,
+    file_type: str | None = None,
+) -> dict[str, Any]:
+    """Runtime helper for semantic document search."""
+    return _search_documents_payload(
+        query=query,
+        top_k=top_k,
+        source_type=source_type,
+        source_id=source_id,
+        module_id=module_id,
+        user_id=user_id,
+        filiere=filiere,
+        file_type=file_type,
+    )
 
 
 @tool
@@ -166,6 +254,7 @@ def format_rag_context_tool(chunks: list[dict[str, Any]], max_chars: int = 6000)
 
 RAG_TOOLS = [
     embed_text_for_rag,
+    search_documents,
     search_course_content,
     format_rag_context_tool,
 ]

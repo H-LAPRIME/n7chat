@@ -36,6 +36,21 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+DO $$ BEGIN
+  CREATE TYPE document_source_enum AS ENUM (
+    'course',
+    'timetable',
+    'news',
+    'admin_document',
+    'event',
+    'other'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+ALTER TYPE file_type_enum ADD VALUE IF NOT EXISTS 'doc';
+ALTER TYPE file_type_enum ADD VALUE IF NOT EXISTS 'pptx';
+
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   email VARCHAR(255) UNIQUE NOT NULL,
@@ -203,6 +218,26 @@ CREATE TABLE IF NOT EXISTS generated_reports (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS document_chunks (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  source_type document_source_enum NOT NULL DEFAULT 'other',
+  source_id UUID,
+  source_table TEXT,
+  source_url TEXT,
+  module_id UUID REFERENCES modules(id) ON DELETE SET NULL,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  chunk_index INT NOT NULL,
+  content TEXT NOT NULL,
+  embedding vector(1024),
+  title TEXT,
+  source_name TEXT,
+  module_name TEXT,
+  filiere TEXT,
+  file_type TEXT,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS course_chunks (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
@@ -217,6 +252,42 @@ CREATE TABLE IF NOT EXISTS course_chunks (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+INSERT INTO document_chunks (
+  id,
+  source_type,
+  source_id,
+  source_table,
+  module_id,
+  chunk_index,
+  content,
+  embedding,
+  title,
+  source_name,
+  module_name,
+  filiere,
+  file_type,
+  metadata,
+  created_at
+)
+SELECT
+  id,
+  'course',
+  course_id,
+  'courses',
+  module_id,
+  chunk_index,
+  content,
+  embedding,
+  title,
+  title,
+  module_name,
+  filiere,
+  file_type,
+  jsonb_build_object('legacy_table', 'course_chunks'),
+  created_at
+FROM course_chunks
+ON CONFLICT (id) DO NOTHING;
+
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_students_code ON students(student_code);
 CREATE INDEX IF NOT EXISTS idx_enseignants_code ON enseignants(teacher_code);
@@ -225,6 +296,11 @@ CREATE INDEX IF NOT EXISTS idx_notes_student ON notes(student_id);
 CREATE INDEX IF NOT EXISTS idx_absences_student ON absences(student_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_source ON document_chunks(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_module ON document_chunks(module_id);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_user ON document_chunks(user_id);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_metadata ON document_chunks USING gin (metadata);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding ON document_chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS idx_course_chunks_course ON course_chunks(course_id);
 CREATE INDEX IF NOT EXISTS idx_course_chunks_module ON course_chunks(module_id);
 CREATE INDEX IF NOT EXISTS idx_course_chunks_embedding ON course_chunks USING hnsw (embedding vector_cosine_ops);

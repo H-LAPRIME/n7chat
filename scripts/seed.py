@@ -457,30 +457,57 @@ def main() -> None:
         ),
     ]
 
-    course_chunks = [
+    document_chunks = [
         {
             "id": stable_id("chunk:bd_intro:0"),
-            "course_id": courses["bd_intro"],
+            "source_type": "course",
+            "source_id": courses["bd_intro"],
+            "source_table": "courses",
             "module_id": modules["bd"],
+            "user_id": None,
             "chunk_index": 0,
             "content": "Le modele relationnel organise les donnees en tables composees de lignes et de colonnes.",
             "embedding": "[" + ",".join(["0"] * 1024) + "]",
             "title": "Introduction au modele relationnel",
+            "source_name": "Introduction au modele relationnel",
             "module_name": "Bases de donnees",
             "filiere": "Genie Informatique",
             "file_type": "pdf",
+            "metadata": '{"legacy_seed": true}',
         },
         {
             "id": stable_id("chunk:algo_graphs:0"),
-            "course_id": courses["algo_graphs"],
+            "source_type": "course",
+            "source_id": courses["algo_graphs"],
+            "source_table": "courses",
             "module_id": modules["algo"],
+            "user_id": None,
             "chunk_index": 0,
             "content": "Un parcours BFS explore un graphe niveau par niveau a partir d'un sommet source.",
             "embedding": "[" + ",".join(["0"] * 1024) + "]",
             "title": "Graphes et parcours",
+            "source_name": "Graphes et parcours",
             "module_name": "Algorithmique avancee",
             "filiere": "Genie Informatique",
             "file_type": "pdf",
+            "metadata": '{"legacy_seed": true}',
+        },
+        {
+            "id": stable_id("chunk:event:conference_ai:0"),
+            "source_type": "event",
+            "source_id": stable_id("event:conference:ai:2026-05-28"),
+            "source_table": "events",
+            "module_id": None,
+            "user_id": users["admin"],
+            "chunk_index": 0,
+            "content": "Conference IA et education le 28/05/2026 a la salle polyvalente.",
+            "embedding": "[" + ",".join(["0"] * 1024) + "]",
+            "title": "Conference IA et education",
+            "source_name": "Conference IA et education",
+            "module_name": None,
+            "filiere": None,
+            "file_type": "text",
+            "metadata": '{"event_type": "conference"}',
         },
     ]
 
@@ -489,28 +516,36 @@ def main() -> None:
             for table, row in seed_rows:
                 upsert(cur, table, row)
 
-            for row in course_chunks:
+            for row in document_chunks:
                 cur.execute(
                     """
-                    INSERT INTO course_chunks (
-                      id, course_id, module_id, chunk_index, content, embedding,
-                      title, module_name, filiere, file_type
+                    INSERT INTO document_chunks (
+                      id, source_type, source_id, source_table, module_id, user_id,
+                      chunk_index, content, embedding, title, source_name,
+                      module_name, filiere, file_type, metadata
                     )
                     VALUES (
-                      %(id)s, %(course_id)s, %(module_id)s, %(chunk_index)s,
-                      %(content)s, %(embedding)s::vector, %(title)s,
-                      %(module_name)s, %(filiere)s, %(file_type)s
+                      %(id)s, %(source_type)s, %(source_id)s, %(source_table)s,
+                      %(module_id)s, %(user_id)s, %(chunk_index)s, %(content)s,
+                      %(embedding)s::vector, %(title)s, %(source_name)s,
+                      %(module_name)s, %(filiere)s, %(file_type)s,
+                      %(metadata)s::jsonb
                     )
                     ON CONFLICT (id) DO UPDATE SET
-                      course_id = EXCLUDED.course_id,
+                      source_type = EXCLUDED.source_type,
+                      source_id = EXCLUDED.source_id,
+                      source_table = EXCLUDED.source_table,
                       module_id = EXCLUDED.module_id,
+                      user_id = EXCLUDED.user_id,
                       chunk_index = EXCLUDED.chunk_index,
                       content = EXCLUDED.content,
                       embedding = EXCLUDED.embedding,
                       title = EXCLUDED.title,
+                      source_name = EXCLUDED.source_name,
                       module_name = EXCLUDED.module_name,
                       filiere = EXCLUDED.filiere,
-                      file_type = EXCLUDED.file_type
+                      file_type = EXCLUDED.file_type,
+                      metadata = EXCLUDED.metadata
                     """,
                     row,
                 )

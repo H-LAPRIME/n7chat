@@ -19,6 +19,7 @@ from backend.tools.rag_tool import (
     embed_text,
     embed_texts,
     format_rag_context,
+    search_document_content,
     vector_search,
 )
 from backend.tools.sql_tool import (
@@ -52,6 +53,7 @@ __all__ = [
     "embed_texts",
     "vector_search",
     "format_rag_context",
+    "search_document_content",
     "build_notes_pdf",
     "build_bulletin_pdf",
     "format_emploi_table",
