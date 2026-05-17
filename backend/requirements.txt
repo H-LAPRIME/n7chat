@@ -7,3 +7,4 @@ mistralai
 reportlab
 langchain-core
 langgraph
+pytest
