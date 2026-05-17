@@ -197,18 +197,83 @@ def courses_page() -> None:
 
     search = st.text_input("Search courses", value="")
     if st.button("List courses"):
+        params: dict[str, Any] = {"limit": 50}
+        if search.strip():
+            params["search"] = search.strip()
         status_code, data = request_json(
             "GET",
             "/courses",
-            params={"search": search or None, "limit": 50},
+            params=params,
         )
         st.json(data if status_code == 200 else {"status": status_code, "data": data})
 
     st.divider()
     st.markdown("Teacher/admin course upload")
+    if st.button("Load my modules for upload"):
+        status_code, data = request_json("GET", "/courses/modules")
+        if status_code == 200:
+            st.session_state["course_modules"] = data
+        else:
+            st.error({"status": status_code, "data": data})
+    if st.button("Load filieres for auto module"):
+        status_code, data = request_json("GET", "/courses/filieres")
+        if status_code == 200:
+            st.session_state["course_filieres"] = data
+        else:
+            st.error({"status": status_code, "data": data})
+
+    modules = st.session_state.get("course_modules", [])
+    module_options = {
+        f"{item.get('code')} - {item.get('name')} ({item.get('filiere_name')})": item.get("id")
+        for item in modules
+    }
+    selected_module_label = st.selectbox(
+        "Module for upload + embedding",
+        [""] + list(module_options.keys()),
+        key="upload_module_select",
+    )
+    upload_module_id = module_options.get(selected_module_label, "")
+    manual_module_id = st.text_input("Existing Module ID, optional", value=upload_module_id, key="upload_module_id")
+
+    filieres = st.session_state.get("course_filieres", [])
+    filiere_options = {
+        f"{item.get('code')} - {item.get('name')}": item.get("id")
+        for item in filieres
+    }
+    selected_filiere_label = st.selectbox(
+        "Filiere for auto-created module",
+        [""] + list(filiere_options.keys()),
+        key="upload_filiere_select",
+    )
+    upload_filiere_id = filiere_options.get(selected_filiere_label, "")
+    manual_filiere_id = st.text_input("Or paste Filiere ID for auto-created module", value=upload_filiere_id)
+    upload_module_name = st.text_input("Auto module name, optional")
+    upload_module_code = st.text_input("Auto module code, optional")
+    upload_semester = st.number_input("Auto module semester", min_value=1, step=1, value=1)
+    upload_title = st.text_input("Course title for upload", key="upload_title")
+    upload_description = st.text_area("Course description for upload", key="upload_description")
     course_file = st.file_uploader("Course file", type=["pdf", "docx", "ppt", "pptx", "txt"])
     if st.button("Upload course file") and course_file:
-        upload_file("/courses/upload", course_file)
+        fields = {}
+        selected_module_id = manual_module_id.strip() or upload_module_id.strip()
+        selected_filiere_id = manual_filiere_id.strip() or upload_filiere_id.strip()
+        if selected_module_id:
+            fields["module_id"] = selected_module_id
+        elif selected_filiere_id:
+            fields["filiere_id"] = selected_filiere_id
+            fields["semester"] = str(int(upload_semester))
+            if upload_module_name.strip():
+                fields["module_name"] = upload_module_name.strip()
+            if upload_module_code.strip():
+                fields["module_code"] = upload_module_code.strip()
+        else:
+            st.error("Select an existing module or select/paste a filiere to auto-create one.")
+            return
+        if upload_title.strip():
+            fields["title"] = upload_title.strip()
+        if upload_description.strip():
+            fields["description"] = upload_description.strip()
+        upload_file("/courses/upload", course_file, fields=fields)
 
     st.divider()
     st.markdown("Create course row")
@@ -218,12 +283,18 @@ def courses_page() -> None:
     file_url = st.text_input("File URL from upload response")
     file_type = st.selectbox("File type", ["pdf", "docx", "ppt", "video", "link", "text"])
     if st.button("Create course"):
+        if not module_id.strip():
+            st.error("Module ID is required and must be a valid UUID.")
+            return
+        if not title.strip():
+            st.error("Title is required.")
+            return
         status_code, data = request_json(
             "POST",
             "/courses",
             json={
-                "module_id": module_id,
-                "title": title,
+                "module_id": module_id.strip(),
+                "title": title.strip(),
                 "description": description or None,
                 "file_url": file_url or None,
                 "file_type": file_type,
@@ -271,11 +342,221 @@ def admin_documents_page() -> None:
         return
 
     doc = st.file_uploader("Administrative document", type=["pdf", "docx", "ppt", "pptx", "txt"])
+    doc_title = st.text_input("Document title")
+    doc_description = st.text_area("Document description")
     if st.button("Upload admin document") and doc:
-        upload_file("/documents/upload", doc)
+        fields = {}
+        if doc_title.strip():
+            fields["title"] = doc_title.strip()
+        if doc_description.strip():
+            fields["description"] = doc_description.strip()
+        upload_file("/documents/upload", doc, fields=fields)
 
 
-def upload_file(path: str, file_obj: Any) -> None:
+def admin_control_panel() -> None:
+    st.subheader("Admin Control Panel")
+    if not require_auth():
+        return
+
+    tab_overview, tab_users, tab_academic, tab_people, tab_assign = st.tabs(
+        ["Overview", "Users", "Academic", "People", "Assignments"]
+    )
+
+    with tab_overview:
+        if st.button("Load admin overview"):
+            status_code, data = request_json("GET", "/admin/overview")
+            st.json(data if status_code == 200 else {"status": status_code, "data": data})
+
+    with tab_users:
+        st.markdown("Create app user")
+        email = st.text_input("User email", key="admin_user_email")
+        password = st.text_input(
+            "Initial password",
+            value="dev-password-hash-change-me",
+            type="password",
+            key="admin_user_password",
+        )
+        role = st.selectbox("Role", ["student", "teacher", "admin"], key="admin_user_role")
+        is_active = st.checkbox("Active", value=True, key="admin_user_active")
+        if st.button("Create user"):
+            status_code, data = request_json(
+                "POST",
+                "/admin/users",
+                json={
+                    "email": email,
+                    "password": password,
+                    "role": role,
+                    "is_active": is_active,
+                },
+            )
+            st.json(data if status_code == 201 else {"status": status_code, "data": data})
+
+        if st.button("List users"):
+            status_code, data = request_json("GET", "/admin/users")
+            st.json(data if status_code == 200 else {"status": status_code, "data": data})
+
+    with tab_academic:
+        st.markdown("Create department")
+        department_name = st.text_input("Department name")
+        department_description = st.text_area("Department description")
+        if st.button("Create department"):
+            status_code, data = request_json(
+                "POST",
+                "/admin/departments",
+                json={"name": department_name, "description": department_description or None},
+            )
+            st.json(data if status_code == 201 else {"status": status_code, "data": data})
+
+        st.markdown("Create level")
+        level_name = st.text_input("Level name", value="Licence 1")
+        level_order = st.number_input("Level order", min_value=1, step=1, value=1)
+        if st.button("Create level"):
+            status_code, data = request_json(
+                "POST",
+                "/admin/levels",
+                json={"name": level_name, "order_number": int(level_order)},
+            )
+            st.json(data if status_code == 201 else {"status": status_code, "data": data})
+
+        st.markdown("Create filiere")
+        filiere_department_id = st.text_input("Department ID for filiere")
+        filiere_name = st.text_input("Filiere name")
+        filiere_code = st.text_input("Filiere code")
+        filiere_duration = st.number_input("Duration years", min_value=1, step=1, value=3)
+        if st.button("Create filiere"):
+            status_code, data = request_json(
+                "POST",
+                "/admin/filieres",
+                json={
+                    "department_id": filiere_department_id or None,
+                    "name": filiere_name,
+                    "code": filiere_code,
+                    "duration_years": int(filiere_duration),
+                },
+            )
+            st.json(data if status_code == 201 else {"status": status_code, "data": data})
+
+        st.markdown("Create module")
+        module_filiere_id = st.text_input("Module filiere ID")
+        module_teacher_id = st.text_input("Optional teacher ID")
+        module_name = st.text_input("Module name")
+        module_code = st.text_input("Module code")
+        module_semester = st.number_input("Semester", min_value=1, step=1, value=1)
+        if st.button("Create module"):
+            status_code, data = request_json(
+                "POST",
+                "/admin/modules",
+                json={
+                    "filiere_id": module_filiere_id,
+                    "teacher_id": module_teacher_id or None,
+                    "name": module_name,
+                    "code": module_code,
+                    "semester": int(module_semester),
+                },
+            )
+            st.json(data if status_code == 201 else {"status": status_code, "data": data})
+
+        col_a, col_b, col_c, col_d = st.columns(4)
+        with col_a:
+            if st.button("List departments"):
+                st.json(request_json("GET", "/admin/departments")[1])
+        with col_b:
+            if st.button("List levels"):
+                st.json(request_json("GET", "/admin/levels")[1])
+        with col_c:
+            if st.button("List filieres"):
+                st.json(request_json("GET", "/admin/filieres")[1])
+        with col_d:
+            if st.button("List modules"):
+                st.json(request_json("GET", "/admin/modules")[1])
+
+    with tab_people:
+        st.markdown("Create teacher profile for teacher user")
+        teacher_user_id = st.text_input("Teacher user ID")
+        teacher_code = st.text_input("Teacher code")
+        teacher_first = st.text_input("Teacher first name")
+        teacher_last = st.text_input("Teacher last name")
+        teacher_dept = st.text_input("Teacher department ID")
+        if st.button("Create teacher profile"):
+            status_code, data = request_json(
+                "POST",
+                "/admin/teachers",
+                json={
+                    "user_id": teacher_user_id,
+                    "teacher_code": teacher_code,
+                    "first_name": teacher_first,
+                    "last_name": teacher_last,
+                    "department_id": teacher_dept or None,
+                },
+            )
+            st.json(data if status_code == 201 else {"status": status_code, "data": data})
+
+        st.markdown("Create student profile for student user")
+        student_user_id = st.text_input("Student user ID")
+        student_code = st.text_input("Student code")
+        student_first = st.text_input("Student first name")
+        student_last = st.text_input("Student last name")
+        student_filiere = st.text_input("Initial filiere ID")
+        student_level = st.text_input("Initial level ID")
+        enrollment_year = st.number_input("Enrollment year", min_value=2000, step=1, value=2026)
+        if st.button("Create student profile"):
+            status_code, data = request_json(
+                "POST",
+                "/admin/students",
+                json={
+                    "user_id": student_user_id,
+                    "student_code": student_code,
+                    "first_name": student_first,
+                    "last_name": student_last,
+                    "filiere_id": student_filiere or None,
+                    "level_id": student_level or None,
+                    "enrollment_year": int(enrollment_year),
+                },
+            )
+            st.json(data if status_code == 201 else {"status": status_code, "data": data})
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("List teachers"):
+                st.json(request_json("GET", "/admin/teachers")[1])
+        with col2:
+            if st.button("List students"):
+                st.json(request_json("GET", "/admin/students")[1])
+
+    with tab_assign:
+        st.markdown("Assign student to filiere / level")
+        assign_student_id = st.text_input("Student ID to assign")
+        assign_filiere_id = st.text_input("Assign filiere ID")
+        assign_level_id = st.text_input("Assign level ID")
+        assign_status = st.selectbox("Student status", ["", "active", "suspended", "graduated"])
+        if st.button("Assign student"):
+            payload: dict[str, Any] = {}
+            if assign_filiere_id:
+                payload["filiere_id"] = assign_filiere_id
+            if assign_level_id:
+                payload["level_id"] = assign_level_id
+            if assign_status:
+                payload["status"] = assign_status
+            status_code, data = request_json(
+                "PATCH",
+                f"/admin/students/{assign_student_id}/assignment",
+                json=payload,
+            )
+            st.json(data if status_code == 200 else {"status": status_code, "data": data})
+
+        st.markdown("Assign teacher to module")
+        assign_module_id = st.text_input("Module ID to assign")
+        assign_teacher_id = st.text_input("Teacher ID, empty to unassign")
+        if st.button("Assign teacher to module"):
+            status_code, data = request_json(
+                "PATCH",
+                f"/admin/modules/{assign_module_id}/teacher",
+                json={"teacher_id": assign_teacher_id or None},
+            )
+            st.json(data if status_code == 200 else {"status": status_code, "data": data})
+
+
+def upload_file(path: str, file_obj: Any, fields: dict[str, str] | None = None) -> None:
     try:
         headers = {}
         if st.session_state.access_token:
@@ -283,6 +564,7 @@ def upload_file(path: str, file_obj: Any) -> None:
         response = httpx.post(
             api_url(path),
             headers=headers,
+            data=fields or {},
             files={"file": (file_obj.name, file_obj.getvalue(), file_obj.type)},
             timeout=120,
         )
@@ -307,7 +589,7 @@ def main() -> None:
     st.session_state.api_url = st.sidebar.text_input("API URL", value=st.session_state.api_url)
     page = st.sidebar.radio(
         "Page",
-        ["Auth", "Profile", "Chat", "Courses", "Events", "Admin Documents"],
+        ["Auth", "Profile", "Chat", "Courses", "Events", "Admin Documents", "Admin Control Panel"],
     )
 
     login_panel()
@@ -325,6 +607,8 @@ def main() -> None:
         events_page()
     elif page == "Admin Documents":
         admin_documents_page()
+    elif page == "Admin Control Panel":
+        admin_control_panel()
 
 
 if __name__ == "__main__":

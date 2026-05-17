@@ -10,7 +10,7 @@ if __package__ is None or __package__ == "":
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routers import auth, chat, courses, documents, events, profile
+from backend.routers import admin, auth, chat, courses, documents, events, profile
 
 app = FastAPI(title="University Platform API")
 
@@ -22,6 +22,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(auth.router,    prefix="/auth",    tags=["auth"])
 app.include_router(chat.router,    prefix="/chat",    tags=["chat"])
 app.include_router(courses.router, prefix="/courses", tags=["courses"])

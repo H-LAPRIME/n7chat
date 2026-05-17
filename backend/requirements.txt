@@ -13,3 +13,6 @@ httpx
 passlib[bcrypt]
 python-multipart
 streamlit
+pypdf
+python-docx
+python-pptx

@@ -34,8 +34,28 @@ async def upload_request_file(
     bucket: str,
     prefix: str,
     max_bytes: int = MAX_UPLOAD_BYTES,
+    required_fields: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Read multipart field ``file`` and upload it to a Supabase Storage bucket."""
+    upload, _content = await upload_request_file_with_content(
+        request,
+        bucket=bucket,
+        prefix=prefix,
+        max_bytes=max_bytes,
+        required_fields=required_fields,
+    )
+    return upload
+
+
+async def upload_request_file_with_content(
+    request: Request,
+    *,
+    bucket: str,
+    prefix: str,
+    max_bytes: int = MAX_UPLOAD_BYTES,
+    required_fields: tuple[str, ...] = (),
+) -> tuple[dict[str, Any], bytes]:
+    """Upload multipart ``file`` and also return its bytes for indexing flows."""
     try:
         form = await request.form()
     except Exception as exc:
@@ -49,6 +69,16 @@ async def upload_request_file(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing multipart file field named 'file'",
+        )
+    missing_fields = [
+        field
+        for field in required_fields
+        if not isinstance(form.get(field), str) or not str(form.get(field)).strip()
+    ]
+    if missing_fields:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Missing required multipart fields: {', '.join(missing_fields)}",
         )
 
     content = await file.read()
@@ -77,4 +107,9 @@ async def upload_request_file(
         "content_type": content_type,
         "size": len(content),
         "filename": filename,
-    }
+        "fields": {
+            key: value
+            for key, value in form.items()
+            if key != "file" and isinstance(value, str)
+        },
+    }, content

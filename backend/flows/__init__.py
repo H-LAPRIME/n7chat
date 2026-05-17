@@ -1,4 +1,11 @@
-from backend.flows.index_flow import chunk_text, index_document, trigger_index_course
+from backend.flows.document_extract_flow import extract_text_from_bytes
+from backend.flows.index_flow import (
+    chunk_text,
+    index_admin_document_upload,
+    index_course_content,
+    index_document,
+    trigger_index_course,
+)
 from backend.flows.notify_flow import create_notification, notify_event_created, notify_users
 from backend.flows.pdf_flow import build_pdf_report_flow
 from backend.flows.storage_flow import (
@@ -15,6 +22,9 @@ __all__ = [
     "create_notification",
     "COURSE_BUCKET",
     "DOCUMENT_BUCKET",
+    "extract_text_from_bytes",
+    "index_admin_document_upload",
+    "index_course_content",
     "index_document",
     "LOGO_BUCKET",
     "notify_event_created",
