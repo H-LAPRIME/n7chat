@@ -64,3 +64,44 @@ def test_collect_sql_context_for_pdf_report(monkeypatch):
     assert data["profile"]["payload"] == {"user_id": "user-1"}
     assert data["notes"]["payload"] == {"student_id": "student-1"}
     assert data["absences"]["payload"] == {"student_id": "student-1"}
+
+
+def test_format_sql_context_for_notes_uses_markdown_table():
+    formatted = sql_agent.format_sql_context(
+        "notes",
+        {
+            "notes": {
+                "ok": True,
+                "data": [
+                    {
+                        "module_name": "Algorithmique",
+                        "exam_type": "cc",
+                        "score": 13,
+                        "coefficient": 0.4,
+                        "published_at": "2026-05-17",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert "| module_name | exam_type | score | coefficient | published_at |" in formatted
+    assert "| Algorithmique | cc | 13 | 0.4 | 2026-05-17 |" in formatted
+
+
+def test_answer_from_sql_sync_attaches_formatted_context(monkeypatch):
+    monkeypatch.setattr(sql_agent, "collect_sql_context", lambda *_: {"notes": {"data": []}})
+    monkeypatch.setattr(sql_agent, "enforce_student_scope", lambda _user, data: data)
+
+    captured = {}
+
+    def fake_answer(message, intent, user, data):
+        captured["data"] = data
+        return {"ok": True, "answer": data["formatted_context"], "data": data, "error": None}
+
+    monkeypatch.setattr(sql_agent, "answer_from_sql_task", fake_answer)
+
+    result = sql_agent.answer_from_sql_sync("mes notes", "notes", {"student_id": "student-1"})
+
+    assert result["ok"] is True
+    assert captured["data"]["formatted_context"] == "_Aucune note trouvee._"

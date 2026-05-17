@@ -15,10 +15,13 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from backend.tasks import rag_llm_task as _task
 from backend.tasks.rag_llm_task import answer_from_documents_task
 from backend.tools.rag_tool import search_document_content
 from backend.tools.sql_tool import get_filiere_modules
 import json
+
+_mistral_client = _task._mistral_client
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +66,12 @@ def answer_from_documents_sync(
             print(f"[RAG Modules Error] {e}")
 
     # --- LLM answer (task layer) ---
-    return answer_from_documents_task(message, filters, search_result, user)
+    original_client = _task._mistral_client
+    _task._mistral_client = _mistral_client
+    try:
+        return answer_from_documents_task(message, filters, search_result, user)
+    finally:
+        _task._mistral_client = original_client
 
 
 # ---------------------------------------------------------------------------

@@ -1,13 +1,33 @@
+"""PDF agent.
+
+Thin async wrapper around the helpers in ``backend.tasks.pdf_llm_task``.
+Responsible for:
+  - Collecting student profile, notes, and absences via SQL tool calls.
+  - Delegating report-type inference to ``infer_report_type_task``.
+  - Calling the appropriate PDF builder (``build_notes_pdf`` / ``build_bulletin_pdf``).
+  - Assembling the response dict via ``build_pdf_answer`` / ``build_pdf_error``.
+  - Exposing the async ``run_pdf_agent`` entry-point consumed by the graph.
+
+Report-type inference and response assembly live in ``backend.tasks.pdf_llm_task``.
+"""
+
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Literal
+from typing import Any
 
+from backend.tasks.pdf_llm_task import (
+    build_pdf_answer,
+    build_pdf_error,
+    infer_report_type_task,
+)
 from backend.tools.pdf_tool import build_bulletin_pdf, build_notes_pdf
 from backend.tools.sql_tool import get_student_absences, get_student_notes, get_student_profile
 
 
-ReportType = Literal["notes", "bulletin"]
+# ---------------------------------------------------------------------------
+# Tool helper
+# ---------------------------------------------------------------------------
 
 
 def _tool_result(tool_obj: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -16,13 +36,13 @@ def _tool_result(tool_obj: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return tool_obj(**payload)
 
 
-def _infer_report_type(message: str, explicit_type: str | None = None) -> ReportType:
-    if explicit_type in ("notes", "bulletin"):
-        return explicit_type  # type: ignore[return-value]
-    lowered = message.lower()
-    if any(word in lowered for word in ["bulletin", "absence", "absences"]):
-        return "bulletin"
-    return "notes"
+def _infer_report_type(message: str, requested_type: str | None = None) -> str:
+    return infer_report_type_task(message, requested_type)
+
+
+# ---------------------------------------------------------------------------
+# Sync runner
+# ---------------------------------------------------------------------------
 
 
 def build_pdf_report_sync(
@@ -37,9 +57,12 @@ def build_pdf_report_sync(
     student = user.get("student") or {}
     student_id = user.get("student_id") or student.get("id")
     user_id = user.get("sub") or user.get("id")
-    selected_type = _infer_report_type(message, report_type)
+
+    # Report type — delegated to task layer
+    selected_type = infer_report_type_task(message, report_type)
 
     try:
+        # --- student profile ---
         profile_context = sql_context.get("profile")
         if isinstance(profile_context, dict) and profile_context.get("data"):
             student = profile_context["data"]
@@ -50,6 +73,7 @@ def build_pdf_report_sync(
         if not student:
             student = user
 
+        # --- notes ---
         notes_result = sql_context.get("notes")
         if not isinstance(notes_result, dict):
             notes_result = (
@@ -58,6 +82,7 @@ def build_pdf_report_sync(
                 else {"data": []}
             )
 
+        # --- absences ---
         absences_result = sql_context.get("absences")
         if not isinstance(absences_result, dict):
             absences_result = (
@@ -69,26 +94,22 @@ def build_pdf_report_sync(
         notes = notes_result.get("data") or []
         absences = absences_result.get("data") or []
 
+        # --- PDF generation ---
         if selected_type == "bulletin":
             file_path = build_bulletin_pdf(student, notes, absences)
         else:
             file_path = build_notes_pdf(student, notes)
 
-        return {
-            "ok": True,
-            "answer": f"Le PDF {selected_type} est pret: {file_path}",
-            "artifact": {"type": selected_type, "file_path": file_path},
-            "data": {"student": student, "notes": notes, "absences": absences},
-            "error": None,
-        }
+        # --- response assembly (task layer) ---
+        return build_pdf_answer(selected_type, file_path, student, notes, absences)
+
     except Exception as exc:
-        return {
-            "ok": False,
-            "answer": f"Je n'ai pas pu generer le PDF: {exc}",
-            "artifact": None,
-            "data": {},
-            "error": str(exc),
-        }
+        return build_pdf_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Async entry-point (used by graph nodes and routers)
+# ---------------------------------------------------------------------------
 
 
 async def run_pdf_agent(

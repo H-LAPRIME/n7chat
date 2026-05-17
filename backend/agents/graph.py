@@ -9,6 +9,7 @@ from backend.agents.orchestrator import run_orchestrator_agent
 from backend.agents.pdf_agent import run_pdf_agent
 from backend.agents.rag_agent import run_rag_agent
 from backend.agents.sql_agent import run_sql_agent
+from backend.agents.general_agent import run_general_agent
 
 
 Intent = Literal[
@@ -17,10 +18,11 @@ Intent = Literal[
     "courses",
     "absence",
     "pdf_report",
+    "profile",
     "general",
 ]
 
-SQL_INTENTS = {"emploi_du_temps", "notes", "absence"}
+SQL_INTENTS = {"emploi_du_temps", "notes", "absence", "profile"}
 RAG_INTENTS = {"courses"}
 PDF_INTENTS = {"pdf_report"}
 
@@ -37,6 +39,7 @@ class AgentState(TypedDict, total=False):
     data: dict[str, Any]
     sources: list[dict[str, Any]]
     artifacts: list[dict[str, Any]]
+    suggest_pdf: bool   # orchestrator sets True → append PDF offer to response
     error: str | None
 
 
@@ -80,6 +83,7 @@ async def orchestrator_node(state: AgentState) -> AgentState:
         "intent": intent,
         "route_reason": decision.get("reason", ""),
         "plan": plan,
+        "suggest_pdf": bool(decision.get("suggest_pdf", False)),
         "executed_agents": [],
     }
 
@@ -138,14 +142,16 @@ async def pdf_node(state: AgentState) -> AgentState:
 
 
 async def general_node(state: AgentState) -> AgentState:
+    result = await run_general_agent(
+        message=state.get("message", ""),
+        history=state.get("history", []),
+        user=state.get("user", {}),
+    )
     return {
         **state,
-        "response": (
-            "Je peux t'aider avec les notes, absences, emploi du temps, cours, "
-            "documents indexes et generation de PDF. Peux-tu preciser ta demande ?"
-        ),
+        "response": result.get("answer", ""),
         "data": state.get("data", {}),
-        "error": None,
+        "error": result.get("error"),
         "executed_agents": [*state.get("executed_agents", []), "general"],
     }
 
@@ -188,6 +194,17 @@ def build_graph():
 graph = build_graph()
 
 
+# ---------------------------------------------------------------------------
+# PDF-offer sentence (appended after normal answer when suggest_pdf=True)
+# ---------------------------------------------------------------------------
+
+_PDF_OFFER = (
+    "\n\n---\n"
+    "📎 Souhaitez-vous que je génère un **rapport PDF** à partir de ces données ? "
+    "Répondez simplement *oui* ou *génère le rapport* et je m'en occupe."
+)
+
+
 async def run_agent(
     message: str,
     history: list[dict[str, Any]] | None,
@@ -205,8 +222,16 @@ async def run_agent(
         "data": {},
         "sources": [],
         "artifacts": [],
+        "suggest_pdf": False,
         "error": None,
     }
 
     final_state = await graph.ainvoke(state)
-    yield final_state.get("response", "")
+    response = final_state.get("response", "")
+
+    # Append PDF offer when orchestrator signalled it and we haven’t generated
+    # a PDF already (artifacts list would be non-empty in that case).
+    if final_state.get("suggest_pdf") and not final_state.get("artifacts"):
+        response = response + _PDF_OFFER
+
+    yield response

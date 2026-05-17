@@ -1,13 +1,22 @@
+"""SQL agent.
+
+Thin async wrapper around the LLM task in ``backend.tasks.sql_llm_task``.
+Responsible for:
+  - Collecting structured SQL context via tool calls (profile, notes, absences…).
+  - Passing that context to ``answer_from_sql_task`` for the Mistral answer.
+  - Exposing the async ``run_sql_agent`` entry-point consumed by the graph.
+
+All Mistral client logic and prompts live in ``backend.tasks.sql_llm_task``.
+"""
+
 from __future__ import annotations
 
 import asyncio
-import json
-from os import environ
-from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
-
+from backend.middleware.access_control import enforce_student_scope
+from backend.tasks.sql_llm_task import answer_from_sql_task
+from backend.tools.format_tool import to_bullet_list, to_markdown_table, truncate_for_chat
 from backend.tools.sql_tool import (
     get_filiere_modules,
     get_student_absences,
@@ -18,39 +27,9 @@ from backend.tools.sql_tool import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(ROOT / "backend" / ".env")
-
-DEFAULT_MODEL = environ.get("MISTRAL_MODEL", "mistral-large-latest")
-
-
-SYSTEM_PROMPT = """
-You are the n7chat SQL agent.
-
-You answer using structured Supabase data only. Speak in clear French.
-If required identifiers are missing, state what is missing.
-Keep answers concise and useful for a university student or teacher.
-"""
-
-
-def _mistral_client():
-    api_key = environ.get("MISTRAL_KEY_SQL")
-    if not api_key:
-        raise RuntimeError("MISTRAL_KEY_SQL is missing from backend/.env")
-
-    try:
-        from mistralai import Mistral
-    except ImportError:
-        from mistralai.client import Mistral
-
-    return Mistral(api_key=api_key)
-
-
-def _extract_content(response: Any) -> str:
-    try:
-        return response.choices[0].message.content or ""
-    except Exception:
-        return str(response)
+# ---------------------------------------------------------------------------
+# Tool helper
+# ---------------------------------------------------------------------------
 
 
 def _tool_result(tool_obj: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -59,11 +38,13 @@ def _tool_result(tool_obj: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return tool_obj(**payload)
 
 
-def _json_dump(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, default=str, indent=2)
+# ---------------------------------------------------------------------------
+# Context collection
+# ---------------------------------------------------------------------------
 
 
 def collect_sql_context(intent: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Fetch relevant Supabase data based on *intent* and *user* context."""
     student = user.get("student") or {}
     student_id = user.get("student_id") or student.get("id")
     user_id = user.get("sub") or user.get("id")
@@ -94,6 +75,14 @@ def collect_sql_context(intent: str, user: dict[str, Any]) -> dict[str, Any]:
         else:
             data["modules"] = {"ok": False, "error": "filiere_id is required", "data": []}
         data["events"] = _tool_result(get_upcoming_events, {"limit": 20})
+    elif intent == "profile":
+        if filiere_id:
+            data["modules"] = _tool_result(
+                get_filiere_modules,
+                {"filiere_id": filiere_id, "semester": user.get("semester")},
+            )
+        else:
+            data["modules"] = {"ok": False, "error": "filiere_id is required", "data": []}
     elif intent == "pdf_report":
         data["notes"] = (
             _tool_result(get_student_notes, {"student_id": student_id})
@@ -115,38 +104,100 @@ def collect_sql_context(intent: str, user: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+# ---------------------------------------------------------------------------
+# Formatting
+# ---------------------------------------------------------------------------
+
+
+def _rows(result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(result, dict):
+        return []
+    data = result.get("data") or []
+    return data if isinstance(data, list) else []
+
+
+def format_sql_context(intent: str, data: dict[str, Any]) -> str:
+    """Format collected SQL context as Markdown before it reaches the LLM."""
+    if intent == "notes":
+        return to_markdown_table(
+            _rows(data.get("notes")),
+            ["module_name", "exam_type", "score", "coefficient", "published_at"],
+            empty_message="_Aucune note trouvee._",
+        )
+
+    if intent == "absence":
+        return to_markdown_table(
+            _rows(data.get("absences")),
+            ["date", "module_name", "module_code", "justified", "justification_file"],
+            empty_message="_Aucune absence trouvee._",
+        )
+
+    if intent == "emploi_du_temps":
+        modules = to_markdown_table(
+            _rows(data.get("modules")),
+            ["module_name", "module_code", "semester", "teacher_first_name", "teacher_last_name"],
+            empty_message="_Aucun module trouve._",
+        )
+        events = to_markdown_table(
+            _rows(data.get("events")),
+            ["title", "event_type", "start_date", "end_date", "location"],
+            empty_message="_Aucun evenement a venir._",
+        )
+        return truncate_for_chat(f"### Modules\n{modules}\n\n### Evenements\n{events}")
+
+    if intent == "pdf_report":
+        notes = to_markdown_table(
+            _rows(data.get("notes")),
+            ["module_name", "exam_type", "score", "coefficient", "published_at"],
+            empty_message="_Aucune note trouvee pour le PDF._",
+        )
+        absences = to_markdown_table(
+            _rows(data.get("absences")),
+            ["date", "module_name", "justified"],
+            empty_message="_Aucune absence trouvee pour le PDF._",
+        )
+        return truncate_for_chat(f"### Notes\n{notes}\n\n### Absences\n{absences}")
+
+    notifications = _rows(data.get("notifications"))
+    if notifications:
+        return to_bullet_list(
+            notifications,
+            "title",
+            ["message", "type", "created_at"],
+            empty_message="_Aucune notification._",
+        )
+
+    modules = _rows(data.get("modules"))
+    if modules:
+        return to_markdown_table(
+            modules,
+            ["module_name", "module_code", "semester", "teacher_first_name", "teacher_last_name"],
+        )
+
+    return "_Aucune donnee structuree a formater._"
+
+
+# ---------------------------------------------------------------------------
+# Sync runner (calls task layer)
+# ---------------------------------------------------------------------------
+
+
 def answer_from_sql_sync(
     message: str,
     intent: str,
     user: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     user = user or {}
-    data = collect_sql_context(intent, user)
-    prompt = (
-        f"Intent: {intent}\n"
-        f"Question: {message}\n"
-        f"User: {_json_dump(user)}\n"
-        f"Supabase data:\n{_json_dump(data)}"
-    )
+    raw_data = collect_sql_context(intent, user)
+    # Hard filter: strip any rows that don't belong to this user
+    data = enforce_student_scope(user, raw_data)
+    data["formatted_context"] = format_sql_context(intent, data)
+    return answer_from_sql_task(message, intent, user, data)
 
-    try:
-        response = _mistral_client().chat.complete(
-            model=DEFAULT_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.2,
-        )
-        answer = _extract_content(response).strip()
-        return {"ok": True, "answer": answer, "data": data, "error": None}
-    except Exception as exc:
-        return {
-            "ok": False,
-            "answer": f"Je n'ai pas pu interroger l'agent SQL: {exc}",
-            "data": data,
-            "error": str(exc),
-        }
+
+# ---------------------------------------------------------------------------
+# Async entry-point (used by graph nodes and routers)
+# ---------------------------------------------------------------------------
 
 
 async def run_sql_agent(

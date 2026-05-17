@@ -8,3 +8,8 @@ reportlab
 langchain-core
 langgraph
 pytest
+PyJWT
+httpx
+passlib[bcrypt]
+python-multipart
+streamlit
