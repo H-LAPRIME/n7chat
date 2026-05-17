@@ -31,11 +31,40 @@ class AgentState(TypedDict, total=False):
     user: dict[str, Any]
     intent: Intent
     route_reason: str
+    plan: list[dict[str, str]]
+    executed_agents: list[str]
     response: str
     data: dict[str, Any]
     sources: list[dict[str, Any]]
     artifacts: list[dict[str, Any]]
     error: str | None
+
+
+def _default_plan(intent: str) -> list[dict[str, str]]:
+    if intent in SQL_INTENTS:
+        return [{"agent": "sql", "purpose": f"Fetch structured data for {intent}."}]
+    if intent in RAG_INTENTS:
+        return [{"agent": "rag", "purpose": "Search indexed documents."}]
+    if intent in PDF_INTENTS:
+        return [
+            {"agent": "sql", "purpose": "Collect profile, notes, and absences."},
+            {"agent": "pdf", "purpose": "Generate the requested PDF report."},
+        ]
+    return [{"agent": "general", "purpose": "Answer or ask for clarification."}]
+
+
+def _next_agent(state: AgentState) -> str:
+    executed = state.get("executed_agents", [])
+    plan = state.get("plan") or _default_plan(state.get("intent", "general"))
+    for step in plan:
+        agent = step.get("agent", "general")
+        if agent not in executed:
+            return agent
+    return "done"
+
+
+def route_from_intent(state: AgentState) -> str:
+    return _next_agent(state)
 
 
 async def orchestrator_node(state: AgentState) -> AgentState:
@@ -44,10 +73,14 @@ async def orchestrator_node(state: AgentState) -> AgentState:
         history=state.get("history", []),
         user=state.get("user", {}),
     )
+    intent = decision["intent"]
+    plan = decision.get("plan") or _default_plan(intent)
     return {
         **state,
-        "intent": decision["intent"],
+        "intent": intent,
         "route_reason": decision.get("reason", ""),
+        "plan": plan,
+        "executed_agents": [],
     }
 
 
@@ -57,11 +90,14 @@ async def sql_node(state: AgentState) -> AgentState:
         intent=state.get("intent", "general"),
         user=state.get("user", {}),
     )
+    data = dict(state.get("data", {}))
+    data["sql"] = result.get("data", {})
     return {
         **state,
         "response": result.get("answer", ""),
-        "data": result.get("data", {}),
+        "data": data,
         "error": result.get("error"),
+        "executed_agents": [*state.get("executed_agents", []), "sql"],
     }
 
 
@@ -70,12 +106,15 @@ async def rag_node(state: AgentState) -> AgentState:
         message=state.get("message", ""),
         user=state.get("user", {}),
     )
+    data = dict(state.get("data", {}))
+    data["rag"] = {"context": result.get("context", "")}
     return {
         **state,
         "response": result.get("answer", ""),
-        "data": {"rag_context": result.get("context", "")},
-        "sources": result.get("sources", []),
+        "data": data,
+        "sources": [*state.get("sources", []), *(result.get("sources", []) or [])],
         "error": result.get("error"),
+        "executed_agents": [*state.get("executed_agents", []), "rag"],
     }
 
 
@@ -83,14 +122,18 @@ async def pdf_node(state: AgentState) -> AgentState:
     result = await run_pdf_agent(
         message=state.get("message", ""),
         user=state.get("user", {}),
+        data_context=state.get("data", {}),
     )
     artifact = result.get("artifact")
+    data = dict(state.get("data", {}))
+    data["pdf"] = result.get("data", {})
     return {
         **state,
         "response": result.get("answer", ""),
-        "data": result.get("data", {}),
-        "artifacts": [artifact] if artifact else [],
+        "data": data,
+        "artifacts": [*state.get("artifacts", []), *([artifact] if artifact else [])],
         "error": result.get("error"),
+        "executed_agents": [*state.get("executed_agents", []), "pdf"],
     }
 
 
@@ -101,20 +144,10 @@ async def general_node(state: AgentState) -> AgentState:
             "Je peux t'aider avec les notes, absences, emploi du temps, cours, "
             "documents indexes et generation de PDF. Peux-tu preciser ta demande ?"
         ),
-        "data": {},
+        "data": state.get("data", {}),
         "error": None,
+        "executed_agents": [*state.get("executed_agents", []), "general"],
     }
-
-
-def route_from_intent(state: AgentState) -> str:
-    intent = state.get("intent", "general")
-    if intent in SQL_INTENTS:
-        return "sql"
-    if intent in RAG_INTENTS:
-        return "rag"
-    if intent in PDF_INTENTS:
-        return "pdf"
-    return "general"
 
 
 def build_graph():
@@ -134,10 +167,21 @@ def build_graph():
             "rag": "rag",
             "pdf": "pdf",
             "general": "general",
+            "done": END,
         },
     )
     for node in ("sql", "rag", "pdf", "general"):
-        builder.add_edge(node, END)
+        builder.add_conditional_edges(
+            node,
+            route_from_intent,
+            {
+                "sql": "sql",
+                "rag": "rag",
+                "pdf": "pdf",
+                "general": "general",
+                "done": END,
+            },
+        )
     return builder.compile()
 
 
@@ -155,6 +199,8 @@ async def run_agent(
         "user": user or {},
         "intent": "general",
         "route_reason": "",
+        "plan": [],
+        "executed_agents": [],
         "response": "",
         "data": {},
         "sources": [],

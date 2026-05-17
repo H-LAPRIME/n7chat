@@ -29,31 +29,42 @@ def build_pdf_report_sync(
     message: str,
     user: dict[str, Any] | None = None,
     report_type: str | None = None,
+    data_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     user = user or {}
+    data_context = data_context or {}
+    sql_context = data_context.get("sql", {}) if isinstance(data_context, dict) else {}
     student = user.get("student") or {}
     student_id = user.get("student_id") or student.get("id")
     user_id = user.get("sub") or user.get("id")
     selected_type = _infer_report_type(message, report_type)
 
     try:
-        if user_id:
+        profile_context = sql_context.get("profile")
+        if isinstance(profile_context, dict) and profile_context.get("data"):
+            student = profile_context["data"]
+        elif user_id:
             profile = _tool_result(get_student_profile, {"user_id": user_id})
             if profile.get("ok") and profile.get("data"):
                 student = profile["data"]
         if not student:
             student = user
 
-        notes_result = (
-            _tool_result(get_student_notes, {"student_id": student_id})
-            if student_id
-            else {"data": []}
-        )
-        absences_result = (
-            _tool_result(get_student_absences, {"student_id": student_id})
-            if student_id
-            else {"data": []}
-        )
+        notes_result = sql_context.get("notes")
+        if not isinstance(notes_result, dict):
+            notes_result = (
+                _tool_result(get_student_notes, {"student_id": student_id})
+                if student_id
+                else {"data": []}
+            )
+
+        absences_result = sql_context.get("absences")
+        if not isinstance(absences_result, dict):
+            absences_result = (
+                _tool_result(get_student_absences, {"student_id": student_id})
+                if student_id
+                else {"data": []}
+            )
 
         notes = notes_result.get("data") or []
         absences = absences_result.get("data") or []
@@ -84,5 +95,12 @@ async def run_pdf_agent(
     message: str,
     user: dict[str, Any] | None = None,
     report_type: str | None = None,
+    data_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(build_pdf_report_sync, message, user or {}, report_type)
+    return await asyncio.to_thread(
+        build_pdf_report_sync,
+        message,
+        user or {},
+        report_type,
+        data_context or {},
+    )

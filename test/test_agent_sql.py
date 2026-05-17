@@ -49,3 +49,18 @@ def test_collect_sql_context_reports_missing_student_id():
 
     assert data["notes"]["ok"] is False
     assert "student_id" in data["notes"]["error"]
+
+
+def test_collect_sql_context_for_pdf_report(monkeypatch):
+    monkeypatch.setattr(sql_agent, "get_student_profile", _fake_tool("profile"))
+    monkeypatch.setattr(sql_agent, "get_student_notes", _fake_tool("notes"))
+    monkeypatch.setattr(sql_agent, "get_student_absences", _fake_tool("absences"))
+
+    data = sql_agent.collect_sql_context(
+        "pdf_report",
+        {"id": "user-1", "student_id": "student-1"},
+    )
+
+    assert data["profile"]["payload"] == {"user_id": "user-1"}
+    assert data["notes"]["payload"] == {"student_id": "student-1"}
+    assert data["absences"]["payload"] == {"student_id": "student-1"}

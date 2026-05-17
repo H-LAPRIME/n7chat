@@ -70,6 +70,9 @@ def collect_sql_context(intent: str, user: dict[str, Any]) -> dict[str, Any]:
     filiere_id = user.get("filiere_id") or student.get("filiere_id")
 
     data: dict[str, Any] = {}
+    if user_id:
+        data["profile"] = _tool_result(get_student_profile, {"user_id": user_id})
+
     if intent == "notes":
         data["notes"] = (
             _tool_result(get_student_notes, {"student_id": student_id})
@@ -91,9 +94,19 @@ def collect_sql_context(intent: str, user: dict[str, Any]) -> dict[str, Any]:
         else:
             data["modules"] = {"ok": False, "error": "filiere_id is required", "data": []}
         data["events"] = _tool_result(get_upcoming_events, {"limit": 20})
+    elif intent == "pdf_report":
+        data["notes"] = (
+            _tool_result(get_student_notes, {"student_id": student_id})
+            if student_id
+            else {"ok": False, "error": "student_id is required", "data": []}
+        )
+        data["absences"] = (
+            _tool_result(get_student_absences, {"student_id": student_id})
+            if student_id
+            else {"ok": False, "error": "student_id is required", "data": []}
+        )
     else:
         if user_id:
-            data["profile"] = _tool_result(get_student_profile, {"user_id": user_id})
             data["notifications"] = _tool_result(
                 get_user_notifications,
                 {"user_id": user_id, "unread_only": False},

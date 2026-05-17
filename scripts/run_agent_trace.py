@@ -22,13 +22,11 @@ from backend.agents.sql_agent import run_sql_agent
 
 
 DEFAULT_USER = {
-    "id": "demo-user",
-    "sub": "demo-user",
+    "user_id": "3ae2e86b-65dc-5939-997a-e69bfa2bcf59",
+    "student_id": "59a46832-5d35-5fb2-bea6-3f48a11fc279",
+    "filiere_id": "c1e4f716-20d6-5016-8cfd-649828cd03cd",
     "role": "student",
-    "student_id": "",
-    "filiere_id": "",
-    "filiere_name": "",
-    "semester": None,
+    "semester": 3
 }
 
 
@@ -48,8 +46,7 @@ def _load_user(args: argparse.Namespace) -> dict[str, Any]:
     if args.role:
         user["role"] = args.role
     if args.user_id:
-        user["id"] = args.user_id
-        user["sub"] = args.user_id
+        user["user_id"] = args.user_id
     if args.student_id:
         user["student_id"] = args.student_id
     if args.filiere_id:
@@ -80,36 +77,54 @@ async def run_trace(message: str, user: dict[str, Any], history: list[dict[str, 
     print(_pretty(decision))
 
     route = route_from_intent({"intent": decision["intent"]})
+    plan = decision.get("plan") or [{"agent": route, "purpose": "Fallback route."}]
     print("\nOrchestrator route decision:")
     print(f"intent = {decision['intent']}")
     print(f"route  = {route}")
     print(f"reason = {decision.get('reason', '')}")
+    print("\nOrchestrator multi-agent plan:")
+    print(_pretty(plan))
 
-    _print_step(f"4. CALL SELECTED AGENT: {route.upper()}")
-    if route == "sql":
-        result = await run_sql_agent(message=message, intent=decision["intent"], user=user)
-    elif route == "rag":
-        result = await run_rag_agent(message=message, user=user)
-    elif route == "pdf":
-        result = await run_pdf_agent(message=message, user=user)
-    else:
-        result = {
-            "ok": True,
-            "answer": (
-                "Je peux t'aider avec les notes, absences, emploi du temps, cours, "
-                "documents indexes et generation de PDF. Peux-tu preciser ta demande ?"
-            ),
-            "data": {},
-            "error": None,
-        }
+    data_context: dict[str, Any] = {}
+    final_result: dict[str, Any] = {}
+    for index, step in enumerate(plan, start=1):
+        agent = step.get("agent", "general")
+        purpose = step.get("purpose", "")
+        _print_step(f"4.{index}. CALL AGENT: {agent.upper()}")
+        print(f"purpose = {purpose}")
 
-    print("Raw selected-agent output:")
-    print(_pretty(result))
+        if agent == "sql":
+            result = await run_sql_agent(message=message, intent=decision["intent"], user=user)
+            data_context["sql"] = result.get("data", {})
+        elif agent == "rag":
+            result = await run_rag_agent(message=message, user=user)
+            data_context["rag"] = {"context": result.get("context"), "sources": result.get("sources")}
+        elif agent == "pdf":
+            result = await run_pdf_agent(
+                message=message,
+                user=user,
+                data_context=data_context,
+            )
+            data_context["pdf"] = result.get("data", {})
+        else:
+            result = {
+                "ok": True,
+                "answer": (
+                    "Je peux t'aider avec les notes, absences, emploi du temps, cours, "
+                    "documents indexes et generation de PDF. Peux-tu preciser ta demande ?"
+                ),
+                "data": {},
+                "error": None,
+            }
+
+        print("Raw agent output:")
+        print(_pretty(result))
+        final_result = result
 
     _print_step("5. FINAL ANSWER RETURNED TO CHAT")
-    print(result.get("answer", ""))
+    print(final_result.get("answer", ""))
 
-    error = result.get("error")
+    error = final_result.get("error")
     if error:
         _print_step("6. ERROR / DEBUG")
         print(error)
