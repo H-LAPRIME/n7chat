@@ -38,7 +38,10 @@ def _mistral_client():
     if not api_key:
         raise RuntimeError("MISTRAL_KEY_SQL is missing from backend/.env")
 
-    from mistralai import Mistral
+    try:
+        from mistralai import Mistral
+    except ImportError:
+        from mistralai.client import Mistral
 
     return Mistral(api_key=api_key)
 

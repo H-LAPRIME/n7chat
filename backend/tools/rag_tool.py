@@ -44,7 +44,10 @@ def _mistral_client():
         raise RuntimeError("MISTRAL_KEY_RAG is missing from backend/.env")
 
     try:
-        from mistralai import Mistral
+        try:
+            from mistralai import Mistral
+        except ImportError:
+            from mistralai.client import Mistral
     except ImportError as exc:
         raise RuntimeError("mistralai is not installed. Add it to requirements.") from exc
 

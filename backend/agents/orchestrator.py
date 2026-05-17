@@ -51,6 +51,7 @@ Classify the user's message into exactly one intent:
 - pdf_report: generate/download PDF report, bulletin, notes report.
 - general: greetings, unclear request, or anything outside the above.
 
+
 Return only JSON:
 {"intent":"...", "confidence":0.0, "reason":"short reason"}
 """
@@ -61,7 +62,10 @@ def _mistral_client():
     if not api_key:
         raise RuntimeError("MISTRAL_KEY_ORCHESTRATOR is missing from backend/.env")
 
-    from mistralai import Mistral
+    try:
+        from mistralai import Mistral
+    except ImportError:
+        from mistralai.client import Mistral
 
     return Mistral(api_key=api_key)
 
