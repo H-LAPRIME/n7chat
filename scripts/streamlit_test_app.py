@@ -267,8 +267,12 @@ def courses_page() -> None:
             if upload_module_code.strip():
                 fields["module_code"] = upload_module_code.strip()
         else:
-            st.error("Select an existing module or select/paste a filiere to auto-create one.")
-            return
+            fields["semester"] = str(int(upload_semester))
+            if upload_module_name.strip():
+                fields["module_name"] = upload_module_name.strip()
+            if upload_module_code.strip():
+                fields["module_code"] = upload_module_code.strip()
+            st.info("No module/filiere selected. Backend will infer a filiere when possible.")
         if upload_title.strip():
             fields["title"] = upload_title.strip()
         if upload_description.strip():
@@ -344,12 +348,17 @@ def admin_documents_page() -> None:
     doc = st.file_uploader("Administrative document", type=["pdf", "docx", "ppt", "pptx", "txt"])
     doc_title = st.text_input("Document title")
     doc_description = st.text_area("Document description")
+    doc_category = st.selectbox(
+        "Document category",
+        ["admin_document", "timetable", "grades", "news", "event", "other"],
+    )
     if st.button("Upload admin document") and doc:
         fields = {}
         if doc_title.strip():
             fields["title"] = doc_title.strip()
         if doc_description.strip():
             fields["description"] = doc_description.strip()
+        fields["document_category"] = doc_category
         upload_file("/documents/upload", doc, fields=fields)
 
 

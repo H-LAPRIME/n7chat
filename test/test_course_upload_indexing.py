@@ -39,6 +39,7 @@ async def _run_index_admin_document(monkeypatch):
         file_type="pdf",
         uploaded_by="user-1",
         description="Document administratif",
+        document_category="timetable",
     )
     return count, captured
 
@@ -49,11 +50,21 @@ def test_admin_document_upload_indexes_as_admin_document(monkeypatch):
     count, captured = asyncio.run(_run_index_admin_document(monkeypatch))
 
     assert count == 2
-    assert captured["source_type"] == "admin_document"
+    assert captured["source_type"] == "timetable"
     assert captured["source_table"] == "storage.documents"
     assert captured["source_url"] == "https://storage/documents/reglement.pdf"
     assert captured["metadata"]["storage_path"] == "admin/user-1/reglement.pdf"
     assert captured["metadata"]["uploaded_by"] == "user-1"
+    assert captured["metadata"]["document_category"] == "timetable"
+
+
+def test_admin_document_category_source_type_mapping():
+    assert index_flow.resolve_admin_document_source_type("emploi_du_temps") == "timetable"
+    assert index_flow.resolve_admin_document_source_type("timetable") == "timetable"
+    assert index_flow.resolve_admin_document_source_type("news") == "news"
+    assert index_flow.resolve_admin_document_source_type("event") == "event"
+    assert index_flow.resolve_admin_document_source_type("other") == "other"
+    assert index_flow.resolve_admin_document_source_type("grades") == "admin_document"
 
 
 def test_auto_create_upload_module(monkeypatch):

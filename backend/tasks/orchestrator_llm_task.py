@@ -113,6 +113,13 @@ STATIC_CAPABILITIES = {
         "event",
         "other",
     ],
+    "agent_strategies": {
+        "sql": "Use structured PostgreSQL data: profiles, notes, absences, events, modules.",
+        "rag": "Use semantic search over document_chunks: courses and uploaded documents.",
+        "hybrid": "Use SQL and RAG together when structured data plus uploaded documents can improve the answer.",
+        "pdf": "Generate a PDF artifact after the required data has been collected.",
+        "general": "Use for greetings, unclear requests, or out-of-scope questions.",
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -137,8 +144,13 @@ Classify the user's message into exactly one intent:
 - general         : greetings, unclear request, or anything outside the above.
 
 Routing rules:
-- SQL-backed intents (notes, absence, emploi_du_temps, profile): prefer sql.
+- SQL-backed intents (notes, absence, profile): prefer sql.
+- Timetable questions may need both SQL and uploaded admin documents:
+  emploi_du_temps should normally plan sql + rag.
 - Document / semantic content: prefer courses → rag.
+- If the user mentions uploaded files, PDF, document, support, archive,
+  administrative note, or a timetable document, prefer courses/rag even when
+  words like notes or emploi_du_temps are present.
 - ONLY route to pdf_report when the user *explicitly* requests PDF generation.
   A question like "show me my notes" is intent=notes, NOT pdf_report.
 
@@ -176,12 +188,13 @@ Set suggest_pdf=false when:
   "reason": "short reason",
   "suggest_pdf": false,
   "plan": [
-    {"agent": "sql|rag|pdf|general", "purpose": "short purpose"}
+    {"agent": "sql|rag|hybrid|pdf|general", "purpose": "short purpose"}
   ]
 }
 
 Planning rules:
-- notes, absence, emploi_du_temps, profile → sql.
+- notes, absence, profile → sql.
+- emploi_du_temps → sql then rag, because timetables can be structured rows or uploaded admin documents.
 - courses → rag.
 - pdf_report → sql first, then pdf.
 - Mixed data+docs → sql + rag.
@@ -271,7 +284,19 @@ def _fallback_intent(message: str) -> Intent:
         return "pdf_report"
     if any(
         word in text
-        for word in ["cours", "document", "support", "chapitre", "news", "administratif"]
+        for word in [
+            "cours",
+            "document",
+            "support",
+            "chapitre",
+            "news",
+            "administratif",
+            "fichier",
+            "upload",
+            "uploaded",
+            "piece jointe",
+            "archive",
+        ]
     ):
         return "courses"
     if any(word in text for word in ["note", "score", "moyenne", "exam", "controle"]):
@@ -290,29 +315,34 @@ def _fallback_plan(intent: str, message: str) -> list[dict[str, str]]:
             {"agent": "sql", "purpose": "Collect student profile, notes, and absences."},
             {"agent": "pdf", "purpose": "Generate the requested PDF report."},
         ]
-    if intent in {"notes", "absence", "emploi_du_temps"}:
+    if intent in {"notes", "absence"}:
         return [{"agent": "sql", "purpose": f"Fetch structured data for {intent}."}]
+    if intent == "emploi_du_temps":
+        return [
+            {
+                "agent": "hybrid",
+                "purpose": "Combine structured timetable data with uploaded timetable/admin documents.",
+            },
+        ]
     if intent == "courses":
-        plan = []
         if any(word in text for word in ["note", "absence", "emploi", "planning"]):
-            plan.append(
+            return [
                 {
-                    "agent": "sql",
-                    "purpose": "Fetch related structured school data before document search.",
+                    "agent": "hybrid",
+                    "purpose": "Combine structured school data with indexed documents.",
                 }
-            )
-        plan.append(
+            ]
+        return [
             {
                 "agent": "rag",
                 "purpose": "Search indexed documents and course/admin content.",
             }
-        )
-        return plan
+        ]
     return [{"agent": "general", "purpose": "Answer or ask for clarification."}]
 
 
 def _normalize_plan(plan: Any, intent: str, message: str) -> list[dict[str, str]]:
-    valid_agents = {"sql", "rag", "pdf", "general"}
+    valid_agents = {"sql", "rag", "hybrid", "pdf", "general"}
     normalized = []
     if isinstance(plan, list):
         for step in plan:
@@ -333,7 +363,7 @@ def _normalize_plan(plan: Any, intent: str, message: str) -> list[dict[str, str]
 
     if intent == "pdf_report":
         agents = [step["agent"] for step in normalized]
-        if "sql" not in agents:
+        if "sql" not in agents and "hybrid" not in agents:
             normalized.insert(
                 0,
                 {
@@ -343,6 +373,19 @@ def _normalize_plan(plan: Any, intent: str, message: str) -> list[dict[str, str]
             )
         if "pdf" not in agents:
             normalized.append({"agent": "pdf", "purpose": "Generate the PDF report."})
+    if intent == "emploi_du_temps":
+        agents = [step["agent"] for step in normalized]
+        if "hybrid" in agents:
+            return normalized
+        if "sql" not in agents:
+            normalized.insert(
+                0,
+                {"agent": "sql", "purpose": "Fetch structured timetable/module/event data."},
+            )
+        if "rag" not in agents:
+            normalized.append(
+                {"agent": "rag", "purpose": "Search uploaded timetable/admin documents."}
+            )
 
     return normalized
 
@@ -425,7 +468,12 @@ def classify_intent_task(
             "user_role": user_role or "unknown",
             "history": (history or [])[-6:],
             "message": message,
-            "system_context": get_orchestrator_context(),
+        "system_context": get_orchestrator_context(),
+        "planning_instruction": (
+            "Choose one autonomous plan from sql, rag, hybrid, pdf, general. "
+            "Use hybrid when both structured database data and uploaded documents "
+            "can help. Keep the plan as small as possible."
+        ),
         },
         ensure_ascii=False,
         default=str,

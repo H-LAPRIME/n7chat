@@ -49,8 +49,38 @@ def _unique_module_code(base: str) -> str:
     return candidate
 
 
+def _infer_upload_filiere_id(fields: dict[str, str], user: dict[str, Any]) -> str:
+    if fields.get("filiere_id"):
+        return str(_normalize_uuid(fields.get("filiere_id"), "filiere_id"))
+
+    if (user.get("role") or "").lower() == "teacher" and user.get("teacher_id"):
+        row = fetch_one(
+            """
+            SELECT filiere_id
+            FROM modules
+            WHERE teacher_id = %(teacher_id)s AND filiere_id IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            {"teacher_id": user["teacher_id"]},
+        )
+        if row and row.get("filiere_id"):
+            return str(row["filiere_id"])
+
+    rows = fetch_all("SELECT id FROM filieres ORDER BY created_at DESC LIMIT 2")
+    if len(rows) == 1:
+        return str(rows[0]["id"])
+    if rows:
+        return str(rows[0]["id"])
+
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail="No filiere exists. Create a filiere first or provide filiere_id.",
+    )
+
+
 def _create_upload_module(fields: dict[str, str], user: dict[str, Any], fallback_title: str) -> str:
-    filiere_id = _normalize_uuid(fields.get("filiere_id"), "filiere_id")
+    filiere_id = _infer_upload_filiere_id(fields, user)
     module_name = (fields.get("module_name") or fallback_title).strip()
     if not module_name:
         raise HTTPException(

@@ -10,6 +10,24 @@ from backend.tools.rag_tool import embed_text
 
 DEFAULT_CHUNK_WORDS = 500
 DEFAULT_OVERLAP_WORDS = 50
+ADMIN_DOCUMENT_SOURCE_TYPES = {
+    "admin_document",
+    "timetable",
+    "emploi_du_temps",
+    "news",
+    "event",
+    "other",
+}
+
+
+def resolve_admin_document_source_type(document_category: str | None) -> str:
+    """Map an admin upload category to a document_chunks source_type."""
+    category = (document_category or "admin_document").strip().lower()
+    if category == "emploi_du_temps":
+        return "timetable"
+    if category in {"timetable", "news", "event", "other"}:
+        return category
+    return "admin_document"
 
 
 def chunk_text(
@@ -146,23 +164,25 @@ async def index_admin_document_upload(
     file_type: str | None = None,
     uploaded_by: str | None = None,
     description: str | None = None,
+    document_category: str | None = None,
 ) -> int:
     """Index an uploaded administrative document stored in the documents bucket."""
-    source_id = str(uuid5(NAMESPACE_URL, f"n7chat:admin_document:{storage_path}"))
     searchable = "\n\n".join(part for part in [title, description or "", content.strip()] if part)
+    source_type = resolve_admin_document_source_type(document_category)
+    source_id = str(uuid5(NAMESPACE_URL, f"n7chat:{source_type}:{storage_path}"))
     return await index_document(
-        source_type="admin_document",
+        source_type=source_type,
         source_id=source_id,
         source_table="storage.documents",
         source_url=public_url,
         content=searchable,
         title=title,
-        source_name=title,
         file_type=file_type,
         metadata={
             "storage_path": storage_path,
             "uploaded_by": uploaded_by,
             "description": description,
+            "document_category": document_category or "admin_document",
             "indexed_content": "uploaded_file",
         },
     )

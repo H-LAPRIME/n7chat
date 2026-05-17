@@ -1,0 +1,834 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french,english]{babel}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{tikz}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{tcolorbox}
+
+\usetikzlibrary{
+  arrows.meta,
+  positioning,
+  shapes.geometric,
+  shapes.misc,
+  fit,
+  backgrounds,
+  calc
+}
+
+\geometry{margin=2.2cm}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!55!black,
+  urlcolor=blue!60!black,
+  citecolor=blue!55!black
+}
+
+\definecolor{n7blue}{HTML}{2457A6}
+\definecolor{n7green}{HTML}{16885A}
+\definecolor{n7orange}{HTML}{D97706}
+\definecolor{n7red}{HTML}{B42318}
+\definecolor{n7gray}{HTML}{F3F4F6}
+\definecolor{n7dark}{HTML}{111827}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{n7chat}
+\rhead{Architecture globale}
+\cfoot{\thepage}
+
+\titleformat{\section}{\Large\bfseries\color{n7blue}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\large\bfseries\color{n7dark}}{\thesubsection}{0.8em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{n7dark}}{\thesubsubsection}{0.8em}{}
+
+\lstdefinestyle{code}{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{n7gray},
+  frame=single,
+  breaklines=true,
+  columns=fullflexible,
+  showstringspaces=false
+}
+\lstset{style=code}
+
+\tikzset{
+  box/.style={
+    rectangle,
+    rounded corners=3pt,
+    draw=n7dark!35,
+    fill=white,
+    thick,
+    align=center,
+    minimum width=2.6cm,
+    minimum height=0.9cm
+  },
+  service/.style={
+    rectangle,
+    rounded corners=3pt,
+    draw=n7blue!70!black,
+    fill=n7blue!7,
+    thick,
+    align=center,
+    minimum width=2.8cm,
+    minimum height=0.9cm
+  },
+  storage/.style={
+    cylinder,
+    shape border rotate=90,
+    aspect=0.25,
+    draw=n7green!70!black,
+    fill=n7green!8,
+    thick,
+    align=center,
+    minimum width=2.2cm,
+    minimum height=1.2cm
+  },
+  agent/.style={
+    rectangle,
+    rounded corners=6pt,
+    draw=n7orange!85!black,
+    fill=n7orange!9,
+    thick,
+    align=center,
+    minimum width=2.6cm,
+    minimum height=0.9cm
+  },
+  decision/.style={
+    diamond,
+    aspect=2.0,
+    draw=n7red!80!black,
+    fill=n7red!7,
+    thick,
+    align=center,
+    inner sep=1pt
+  },
+  arrow/.style={-{Latex[length=2.5mm]}, thick, draw=n7dark!80},
+  dashedarrow/.style={-{Latex[length=2.5mm]}, thick, dashed, draw=n7dark!70}
+}
+
+\title{
+  \vspace{-1.2cm}
+  \textbf{\Huge n7chat}\\
+  \Large Guide d'architecture globale, workflows et roles utilisateurs
+}
+\author{Projet n7chat}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Objectif du systeme}
+
+\textbf{n7chat} est une plateforme universitaire avec trois axes:
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item une application frontend pour les etudiants, enseignants et administrateurs;
+  \item une API FastAPI connectee a Supabase pour les donnees structurees et le stockage;
+  \item un systeme agentique LangGraph + Mistral capable de router une question vers SQL, RAG, PDF ou une reponse generale.
+\end{itemize}
+
+\begin{tcolorbox}[colback=n7blue!5,colframe=n7blue,title=Principe central]
+L'utilisateur pose une question naturelle. L'orchestrateur determine l'intention, planifie les agents necessaires, puis execute les noeuds LangGraph. Les donnees sont toujours filtrees par role et par contexte utilisateur avant d'etre envoyees au modele.
+\end{tcolorbox}
+
+\section{Vue globale de l'architecture}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=1.15cm and 1.15cm, scale=0.92, transform shape]
+  \node[box] (frontend) {Frontend\\Next.js\\Streamlit test};
+  \node[service, right=1.2cm of frontend] (api) {FastAPI\\Routers + JWT};
+  \node[agent, right=1.2cm of api] (agents) {LangGraph\\Agents};
+  \node[service, right=1.2cm of agents] (mistral) {Mistral\\LLM + embeddings};
+
+  \node[storage, below=1.3cm of api] (postgres) {Supabase\\PostgreSQL};
+  \node[storage, below=1.3cm of agents] (vector) {pgvector\\document\_chunks};
+  \node[storage, above=1.3cm of api] (storage) {Supabase\\Storage buckets};
+
+  \draw[arrow] (frontend) -- node[above,font=\scriptsize]{HTTP / SSE} (api);
+  \draw[arrow] (api) -- node[above,font=\scriptsize]{chat} (agents);
+  \draw[arrow] (agents) -- node[above,font=\scriptsize]{LLM calls} (mistral);
+
+  \draw[arrow] (api) -- node[left,font=\scriptsize]{CRUD SQL} (postgres);
+  \draw[arrow] (api) -- node[left,font=\scriptsize]{uploads} (storage);
+  \draw[arrow] (agents) -- node[right,font=\scriptsize]{SQL tools} (postgres);
+  \draw[arrow] (agents) -- node[right,font=\scriptsize]{semantic search} (vector);
+  \draw[arrow] (api) -- node[below,font=\scriptsize]{indexing} (vector);
+  \draw[dashedarrow] (api) to[bend left=14] node[above,font=\scriptsize]{extract + embed} (mistral);
+\end{tikzpicture}
+\caption{Architecture globale n7chat}
+\end{figure}
+
+\subsection{Composants principaux}
+
+\begin{longtable}{p{4cm}p{10cm}}
+\toprule
+\textbf{Composant} & \textbf{Responsabilite}\\
+\midrule
+Frontend Next.js & Interface finale pour etudiants, enseignants et administrateurs.\\
+Streamlit test app & Interface de test rapide avant le frontend production.\\
+FastAPI routers & Endpoints: auth, chat, profile, courses, events, documents, admin.\\
+Middleware JWT & Decode le token, injecte le contexte utilisateur, bloque les comptes inactifs.\\
+Supabase PostgreSQL & Tables structurees: users, students, enseignants, modules, courses, notes, absences, events.\\
+Supabase Storage & Buckets: courses, profiles, documents, logos.\\
+pgvector & Table \texttt{document\_chunks} pour le RAG.\\
+LangGraph & Orchestration multi-agent: orchestrator, sql, rag, pdf, general.\\
+Mistral & Intent routing, reponses LLM, embeddings \texttt{mistral-embed}.\\
+\bottomrule
+\end{longtable}
+
+\section{Organisation du backend}
+
+\begin{lstlisting}
+backend/
+  main.py
+  routers/
+    auth.py
+    chat.py
+    courses.py
+    documents.py
+    events.py
+    profile.py
+    admin.py
+  models/
+    auth.py
+    chat.py
+    courses.py
+    events.py
+    profile.py
+    admin.py
+  agents/
+    graph.py
+    orchestrator.py
+    sql_agent.py
+    rag_agent.py
+    pdf_agent.py
+    general_agent.py
+  tasks/
+    orchestrator_llm_task.py
+    sql_llm_task.py
+    rag_llm_task.py
+    pdf_llm_task.py
+    general_llm_task.py
+  tools/
+    sql_tool.py
+    rag_tool.py
+    pdf_tool.py
+    calendar_tool.py
+    format_tool.py
+  flows/
+    index_flow.py
+    document_extract_flow.py
+    storage_flow.py
+    pdf_flow.py
+    notify_flow.py
+  db/
+    supabase.py
+    vector.py
+\end{lstlisting}
+
+\subsection{Separation routers, models, flows, agents}
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item \textbf{models}: schemas Pydantic, validation des entrees API.
+  \item \textbf{routers}: endpoints HTTP et orchestration API.
+  \item \textbf{flows}: jobs backend non-LLM: upload, extraction, indexing, notifications, cache PDF.
+  \item \textbf{tools}: fonctions reutilisables par agents: SQL, RAG, PDF, formatage.
+  \item \textbf{tasks}: appels LLM synchrones et prompts systeme.
+  \item \textbf{agents}: wrappers async et noeuds LangGraph.
+\end{itemize}
+
+\section{Authentification JWT}
+
+\subsection{Workflow}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=1.2cm and 1.4cm]
+  \node[box] (user) {User};
+  \node[service, right=of user] (login) {POST /auth/login};
+  \node[storage, right=of login] (db) {users\\refresh\_tokens};
+  \node[box, below=of login] (tokens) {access token\\refresh token};
+  \node[service, below=of tokens] (protected) {Protected route};
+  \node[decision, right=of protected] (valid) {JWT valid?};
+  \node[service, right=of valid] (refresh) {POST /auth/refresh};
+
+  \draw[arrow] (user) -- (login);
+  \draw[arrow] (login) -- node[above]{check password} (db);
+  \draw[arrow] (login) -- (tokens);
+  \draw[arrow] (tokens) -- node[left]{Bearer access} (protected);
+  \draw[arrow] (protected) -- (valid);
+  \draw[arrow] (valid) -- node[above]{expired} (refresh);
+  \draw[arrow] (refresh) -- node[above]{rotate} (db);
+  \draw[arrow] (refresh) |- (tokens);
+\end{tikzpicture}
+\caption{Authentification et rotation du refresh token}
+\end{figure}
+
+\subsection{Regles}
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item \texttt{access\_token}: duree 1 heure.
+  \item \texttt{refresh\_token}: duree 30 jours.
+  \item \texttt{/auth/refresh}: revoque l'ancien refresh token et en cree un nouveau.
+  \item \texttt{/auth/logout}: revoque le refresh token actif.
+  \item Les routes protegees utilisent \texttt{Authorization: Bearer <access\_token>}.
+  \item Le middleware enrichit le contexte avec role, user id, student id, teacher id, filiere, level.
+\end{itemize}
+
+\section{Base de donnees Supabase}
+
+\subsection{Modele relationnel simplifie}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=1.1cm and 1.35cm, scale=0.88, transform shape]
+  \node[storage] (users) {users};
+  \node[storage, below left=1.0cm and 1.4cm of users] (students) {students};
+  \node[storage, below right=1.0cm and 1.4cm of users] (teachers) {enseignants};
+
+  \node[storage, below=1.1cm of students] (levels) {levels};
+  \node[storage, right=1.35cm of levels] (filieres) {filieres};
+  \node[storage, right=1.35cm of filieres] (departments) {departments};
+
+  \node[storage, below=1.15cm of filieres] (modules) {modules};
+  \node[storage, below left=1.1cm and 1.35cm of modules] (courses) {courses};
+  \node[storage, below=1.1cm of modules] (notes) {notes};
+  \node[storage, below right=1.1cm and 1.35cm of modules] (absences) {absences};
+  \node[storage, below=1.1cm of courses] (chunks) {document\\chunks};
+
+  \draw[arrow] (users) -- (students);
+  \draw[arrow] (users) -- (teachers);
+  \draw[arrow] (students) -- (levels);
+  \draw[arrow] (students) -- (filieres);
+  \draw[arrow] (filieres) -- (departments);
+  \draw[arrow] (modules) -- (filieres);
+  \draw[arrow] (modules) -- (teachers);
+  \draw[arrow] (courses) -- (modules);
+  \draw[arrow] (notes) -- (students);
+  \draw[arrow] (notes) -- (modules);
+  \draw[arrow] (absences) -- (students);
+  \draw[arrow] (absences) -- (modules);
+  \draw[arrow] (chunks) -- (courses);
+\end{tikzpicture}
+\caption{Relations principales}
+\end{figure}
+
+\subsection{Table vectorielle}
+
+\begin{lstlisting}
+document_chunks(
+  id UUID,
+  source_type document_source_enum,
+  source_id UUID,
+  source_table TEXT,
+  source_url TEXT,
+  module_id UUID,
+  user_id UUID,
+  chunk_index INT,
+  content TEXT,
+  embedding vector(1024),
+  title TEXT,
+  source_name TEXT,
+  module_name TEXT,
+  filiere TEXT,
+  file_type TEXT,
+  metadata JSONB
+)
+\end{lstlisting}
+
+\section{Supabase Storage}
+
+\begin{longtable}{p{3cm}p{4cm}p{7cm}}
+\toprule
+\textbf{Bucket} & \textbf{Acteur} & \textbf{Usage}\\
+\midrule
+\texttt{courses} & Enseignant/Admin & Supports de cours. Upload, extraction, embedding dans \texttt{document\_chunks}.\\
+\texttt{documents} & Admin & Documents administratifs. Upload, extraction, embedding en \texttt{admin\_document}.\\
+\texttt{profiles} & Tous les utilisateurs & Photos de profil.\\
+\texttt{logos} & Admin & Logos et assets institutionnels.\\
+\bottomrule
+\end{longtable}
+
+\section{Indexation documentaire et RAG}
+
+\subsection{Workflow upload cours}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=1.1cm and 1.1cm]
+  \node[box] (teacher) {Teacher};
+  \node[service, right=of teacher] (upload) {POST /courses/upload};
+  \node[storage, right=of upload] (bucket) {bucket\\courses};
+  \node[service, below=of upload] (module) {Existing module\\or auto-create module};
+  \node[service, right=of module] (extract) {Extract text\\PDF/DOCX/PPTX/TXT};
+  \node[service, right=of extract] (embed) {Mistral\\embedding};
+  \node[storage, right=of embed] (chunks) {document\_chunks};
+
+  \draw[arrow] (teacher) -- (upload);
+  \draw[arrow] (upload) -- (bucket);
+  \draw[arrow] (upload) -- (module);
+  \draw[arrow] (module) -- node[above]{course row} (extract);
+  \draw[arrow] (extract) -- (embed);
+  \draw[arrow] (embed) -- (chunks);
+\end{tikzpicture}
+\caption{Upload et embedding d'un cours}
+\end{figure}
+
+\subsection{Auto-creation module}
+
+Si l'enseignant ne fournit pas de \texttt{module\_id}, le backend peut creer un module automatiquement:
+
+\begin{enumerate}[leftmargin=1.2cm]
+  \item utiliser \texttt{filiere\_id} si fourni;
+  \item sinon utiliser la filiere du dernier module assigne a cet enseignant;
+  \item sinon utiliser une filiere existante;
+  \item sinon demander de creer une filiere.
+\end{enumerate}
+
+Le code module est genere depuis le titre, par exemple:
+
+\begin{lstlisting}
+"theorie des graphes" -> "THEORIE-DES-GRAPHES"
+\end{lstlisting}
+
+\subsection{Workflow upload document administratif}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=1.1cm and 1.1cm]
+  \node[box] (admin) {Admin};
+  \node[service, right=of admin] (upload) {POST /documents/upload};
+  \node[storage, right=of upload] (bucket) {bucket\\documents};
+  \node[service, below=of upload] (extract) {Extract text};
+  \node[service, right=of extract] (embed) {Mistral\\embedding};
+  \node[storage, right=of embed] (chunks) {document\_chunks\\source=admin\_document};
+
+  \draw[arrow] (admin) -- (upload);
+  \draw[arrow] (upload) -- (bucket);
+  \draw[arrow] (upload) -- (extract);
+  \draw[arrow] (extract) -- (embed);
+  \draw[arrow] (embed) -- (chunks);
+\end{tikzpicture}
+\caption{Upload et embedding d'un document administratif}
+\end{figure}
+
+\section{Architecture LangGraph}
+
+\subsection{Etat partage}
+
+Le graphe utilise un etat \texttt{AgentState} contenant:
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item \texttt{message}: message utilisateur courant;
+  \item \texttt{history}: historique conversationnel;
+  \item \texttt{user}: contexte JWT enrichi;
+  \item \texttt{intent}: intention detectee;
+  \item \texttt{plan}: liste d'etapes agentiques;
+  \item \texttt{executed\_agents}: agents deja executes;
+  \item \texttt{data}: resultats SQL/RAG/PDF accumules;
+  \item \texttt{sources}: chunks RAG utilises;
+  \item \texttt{artifacts}: fichiers PDF generes;
+  \item \texttt{response}: reponse finale.
+\end{itemize}
+
+\subsection{Noeuds LangGraph}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=1.15cm and 1.25cm, scale=0.92, transform shape]
+  \node[agent] (orch) {orchestrator};
+  \node[agent, below left=1.15cm and 2.7cm of orch] (sql) {sql};
+  \node[agent, below=1.15cm of orch] (rag) {rag};
+  \node[agent, below right=1.15cm and 2.7cm of orch] (pdf) {pdf};
+  \node[agent, right=2.9cm of orch] (general) {general};
+  \node[box, below=2.0cm of rag] (end) {END};
+
+  \draw[arrow] (orch) -- node[above left,font=\scriptsize]{notes / absence / profile} (sql);
+  \draw[arrow] (orch) -- node[right,font=\scriptsize]{courses / docs} (rag);
+  \draw[arrow] (orch) -- node[above right,font=\scriptsize]{pdf\_report} (pdf);
+  \draw[arrow] (orch) -- node[above,font=\scriptsize]{general} (general);
+
+  \draw[arrow] (sql) -- (end);
+  \draw[arrow] (rag) -- (end);
+  \draw[arrow] (general) |- (end);
+  \draw[arrow] (pdf) -- (end);
+  \draw[dashedarrow] (sql) to[bend left=18] node[below,font=\scriptsize]{multi-step} (pdf);
+\end{tikzpicture}
+\caption{Noeuds LangGraph et routage conditionnel}
+\end{figure}
+
+\subsection{Plans multi-agents}
+
+L'orchestrateur renvoie un JSON:
+
+\begin{lstlisting}
+{
+  "intent": "pdf_report",
+  "confidence": 0.98,
+  "reason": "User requests a PDF bulletin",
+  "suggest_pdf": false,
+  "plan": [
+    {"agent": "sql", "purpose": "Collect profile, notes, absences"},
+    {"agent": "pdf", "purpose": "Generate the PDF report"}
+  ]
+}
+\end{lstlisting}
+
+\subsection{Intentions supportees}
+
+\begin{longtable}{p{3.2cm}p{2.5cm}p{8cm}}
+\toprule
+\textbf{Intent} & \textbf{Agent} & \textbf{Description}\\
+\midrule
+\texttt{notes} & SQL & Recuperer les notes de l'etudiant.\\
+\texttt{absence} & SQL & Recuperer les absences et justifications.\\
+\texttt{emploi\_du\_temps} & SQL & Recuperer modules et evenements.\\
+\texttt{profile} & SQL & Recuperer profil, filiere, departement, enseignants.\\
+\texttt{courses} & RAG & Chercher dans les cours et documents indexes.\\
+\texttt{pdf\_report} & SQL + PDF & Collecter donnees puis generer un PDF temporaire.\\
+\texttt{general} & General & Reponse hors donnees structurees.\\
+\bottomrule
+\end{longtable}
+
+\section{Agents}
+
+\subsection{Orchestrator agent}
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item Lit le message, l'historique et le role.
+  \item Connait les tables disponibles via le schema.
+  \item Classe l'intention.
+  \item Produit un plan d'agents.
+  \item Peut proposer un PDF apres une reponse structuree.
+\end{itemize}
+
+\subsection{SQL agent}
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item Utilise \texttt{sql\_tool.py}.
+  \item Recupere notes, absences, modules, evenements, profil.
+  \item Applique \texttt{enforce\_student\_scope}.
+  \item Formate les resultats avec \texttt{format\_tool.py}.
+  \item Donne au LLM des donnees deja filtrees.
+\end{itemize}
+
+\subsection{RAG agent}
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item Embed la question avec \texttt{mistral-embed}.
+  \item Recherche dans \texttt{document\_chunks}.
+  \item Assemble un contexte sourcé.
+  \item Repond uniquement avec les documents recuperes.
+\end{itemize}
+
+\subsection{PDF agent}
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item Determine le type: notes ou bulletin.
+  \item Utilise les donnees SQL collectees si disponibles.
+  \item Genere un PDF via ReportLab.
+  \item Stocke le PDF temporairement dans un cache serveur utilisateur, pas dans Supabase long terme.
+\end{itemize}
+
+\subsection{General agent}
+
+Agent de secours pour les salutations, questions vagues ou demandes hors systeme.
+
+\section{Fonctionnalites par role}
+
+\subsection{Etudiant}
+
+\begin{longtable}{p{5cm}p{9cm}}
+\toprule
+\textbf{Fonctionnalite} & \textbf{Description}\\
+\midrule
+Login/logout & Authentification JWT.\\
+Profil & Voir son profil, filiere, niveau, informations personnelles.\\
+Chat & Poser des questions en langage naturel.\\
+Notes & Demander ses notes, moyennes, details par module.\\
+Absences & Demander ses absences et justifications.\\
+Cours/RAG & Demander une explication d'un chapitre ou document uploadé par un enseignant/admin.\\
+PDF & Demander un bulletin ou un rapport PDF temporaire.\\
+Evenements & Voir examens, conferences, reunions, jours feries.\\
+\bottomrule
+\end{longtable}
+
+\subsection{Enseignant}
+
+\begin{longtable}{p{5cm}p{9cm}}
+\toprule
+\textbf{Fonctionnalite} & \textbf{Description}\\
+\midrule
+Login/logout & Authentification JWT.\\
+Profil & Voir/modifier bureau, telephone, specialisation.\\
+Upload cours & Envoyer PDF/DOCX/PPTX/TXT dans bucket \texttt{courses}.\\
+Auto module & Auto-creer un module lors de l'upload si aucun module existant n'est choisi.\\
+Indexation RAG & Le contenu du fichier est extrait, chunké, embedde, stocke dans \texttt{document\_chunks}.\\
+CRUD courses & Creer, modifier, supprimer ses cours.\\
+Events & Creer des evenements et notifier les etudiants.\\
+Chat scoped & Poser des questions dans le cadre de son role.\\
+\bottomrule
+\end{longtable}
+
+\subsection{Administrateur}
+
+\begin{longtable}{p{5cm}p{9cm}}
+\toprule
+\textbf{Fonctionnalite} & \textbf{Description}\\
+\midrule
+Gestion utilisateurs & Creer admin, enseignant, etudiant; activer/desactiver.\\
+Gestion enseignants & Creer profil enseignant et lier a un compte user.\\
+Gestion etudiants & Creer profil etudiant, assigner filiere, niveau, statut.\\
+Gestion academique & Creer departements, niveaux, filieres, modules.\\
+Assignation & Assigner enseignant a module, etudiant a filiere/niveau.\\
+Documents admin & Uploader documents dans bucket \texttt{documents}; indexer pour RAG.\\
+Control panel & Utiliser Streamlit pour gerer la DB avant le frontend final.\\
+\bottomrule
+\end{longtable}
+
+\section{Workflows utilisateur}
+
+\subsection{Etudiant pose une question sur un cours}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=1.05cm and 1.05cm, scale=0.9, transform shape]
+  \node[box] (student) {Student};
+  \node[service, right=of student] (chat) {POST\\chat/stream};
+  \node[agent, right=of chat] (orch) {orchestrator};
+  \node[agent, right=of orch] (rag) {RAG agent};
+  \node[storage, below=of rag] (chunks) {document\\chunks};
+  \node[service, right=of rag] (llm) {Mistral};
+  \node[box, below=of llm] (answer) {SSE answer};
+
+  \draw[arrow] (student) -- (chat);
+  \draw[arrow] (chat) -- (orch);
+  \draw[arrow] (orch) -- node[above,font=\scriptsize]{intent=courses} (rag);
+  \draw[arrow] (rag) -- node[right,font=\scriptsize]{search} (chunks);
+  \draw[arrow] (rag) -- node[above,font=\scriptsize]{context} (llm);
+  \draw[arrow] (llm) -- node[right,font=\scriptsize]{stream} (answer);
+\end{tikzpicture}
+\caption{Question RAG etudiant}
+\end{figure}
+
+\subsection{Enseignant upload un cours}
+
+\begin{enumerate}[leftmargin=1.2cm]
+  \item Enseignant login.
+  \item Il ouvre Courses dans Streamlit ou frontend.
+  \item Il upload un fichier.
+  \item Le backend sauvegarde dans bucket \texttt{courses}.
+  \item Le backend cree ou reutilise le module.
+  \item Le backend cree une ligne \texttt{courses}.
+  \item Le texte est extrait.
+  \item Les chunks sont embeddes.
+  \item Les etudiants peuvent interroger ce contenu via RAG.
+\end{enumerate}
+
+\subsection{Admin cree un etudiant}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=1.1cm and 1.1cm]
+  \node[box] (admin) {Admin};
+  \node[service, right=of admin] (user) {POST /admin/users\\role=student};
+  \node[storage, right=of user] (users) {users};
+  \node[service, below=of user] (student) {POST /admin/students};
+  \node[storage, right=of student] (students) {students};
+  \node[service, below=of student] (assign) {PATCH assignment};
+  \node[storage, right=of assign] (school) {filieres\\levels};
+
+  \draw[arrow] (admin) -- (user);
+  \draw[arrow] (user) -- (users);
+  \draw[arrow] (user) -- (student);
+  \draw[arrow] (student) -- (students);
+  \draw[arrow] (student) -- (assign);
+  \draw[arrow] (assign) -- (school);
+\end{tikzpicture}
+\caption{Creation et assignation d'un etudiant}
+\end{figure}
+
+\section{API principale}
+
+\subsection{Auth}
+
+\begin{lstlisting}
+POST /auth/login
+POST /auth/refresh
+POST /auth/logout
+GET  /auth/me
+\end{lstlisting}
+
+\subsection{Chat}
+
+\begin{lstlisting}
+POST   /chat/stream
+GET    /chat/conversations
+POST   /chat/conversations
+PATCH  /chat/conversations/{conv_id}
+DELETE /chat/conversations/{conv_id}
+GET    /chat/conversations/{conv_id}/messages
+\end{lstlisting}
+
+\subsection{Courses}
+
+\begin{lstlisting}
+GET    /courses
+GET    /courses/modules
+GET    /courses/filieres
+POST   /courses
+PATCH  /courses/{course_id}
+DELETE /courses/{course_id}
+POST   /courses/upload
+\end{lstlisting}
+
+\subsection{Documents}
+
+\begin{lstlisting}
+POST /documents/upload
+\end{lstlisting}
+
+\subsection{Admin}
+
+\begin{lstlisting}
+GET    /admin/overview
+GET    /admin/users
+POST   /admin/users
+PATCH  /admin/users/{user_id}/active
+GET    /admin/departments
+POST   /admin/departments
+GET    /admin/levels
+POST   /admin/levels
+GET    /admin/filieres
+POST   /admin/filieres
+GET    /admin/teachers
+POST   /admin/teachers
+GET    /admin/students
+POST   /admin/students
+PATCH  /admin/students/{student_id}/assignment
+GET    /admin/modules
+POST   /admin/modules
+PATCH  /admin/modules/{module_id}/teacher
+\end{lstlisting}
+
+\section{Securite et controle d'acces}
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item Toutes les routes metier exigent JWT.
+  \item Admin seul peut acceder a \texttt{/admin/*}.
+  \item Enseignant peut ecrire seulement ses cours/modules.
+  \item Etudiant peut lire seulement ses notes, absences, notifications, conversations.
+  \item Les donnees sensibles sont filtrees avant le prompt LLM.
+  \item Les refresh tokens sont hashes dans la base.
+\end{itemize}
+
+\begin{tcolorbox}[colback=n7red!5,colframe=n7red,title=Point important]
+Le secret JWT doit avoir au moins 32 caracteres. Exemple:
+\begin{lstlisting}
+JWT_SECRET=n7chat-local-dev-secret-change-me-please-2026
+\end{lstlisting}
+\end{tcolorbox}
+
+\section{Streamlit test app}
+
+Le fichier \texttt{scripts/streamlit\_test\_app.py} est une interface temporaire pour tester:
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item auth login/refresh/logout;
+  \item profil et upload photo;
+  \item chat SSE;
+  \item upload cours + auto module + embedding;
+  \item upload documents admin + embedding;
+  \item admin control panel.
+\end{itemize}
+
+\begin{lstlisting}
+cd C:\Users\pc\Desktop\n7chat
+.\backend\.venv\Scripts\python.exe -m streamlit run scripts\streamlit_test_app.py
+\end{lstlisting}
+
+\section{Commandes operationnelles}
+
+\subsection{Installer les dependances}
+
+\begin{lstlisting}
+cd C:\Users\pc\Desktop\n7chat
+.\backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+\end{lstlisting}
+
+\subsection{Appliquer le schema Supabase}
+
+\begin{lstlisting}
+.\backend\.venv\Scripts\python.exe scripts\apply_schema.py
+\end{lstlisting}
+
+\subsection{Seeder les donnees}
+
+\begin{lstlisting}
+.\backend\.venv\Scripts\python.exe scripts\seed.py
+\end{lstlisting}
+
+\subsection{Lancer le backend}
+
+\begin{lstlisting}
+cd C:\Users\pc\Desktop\n7chat\backend
+python .\main.py
+\end{lstlisting}
+
+\subsection{Lancer les tests}
+
+\begin{lstlisting}
+cd C:\Users\pc\Desktop\n7chat
+.\backend\.venv\Scripts\python.exe -m pytest test -q
+\end{lstlisting}
+
+\section{Definition of done par sprint}
+
+\begin{longtable}{p{2cm}p{12cm}}
+\toprule
+\textbf{Sprint} & \textbf{Definition of done}\\
+\midrule
+1 & Auth JWT, refresh rotation, routes profile, comptes inactifs bloques.\\
+2 & Chat SSE, LangGraph, SQL agent, notes/absences/emploi.\\
+3 & pgvector, indexing pipeline, RAG agent, documents cours/admin interrogeables.\\
+4 & PDF tool, detection rapport, cache PDF temporaire par utilisateur.\\
+5 & Features enseignants: upload cours, events, notifications; admin control panel.\\
+6 & Frontend final, QA roles, deploy, cleanup des PDF temporaires.\\
+\bottomrule
+\end{longtable}
+
+\section{Risques techniques et ameliorations}
+
+\begin{longtable}{p{4cm}p{10cm}}
+\toprule
+\textbf{Risque} & \textbf{Mitigation}\\
+\midrule
+Extraction PDF vide & Afficher un warning si \texttt{content\_chars = 0}; proposer OCR plus tard.\\
+Filiere auto-inferree incorrecte & Preferer selection explicite dans frontend final.\\
+Cout embeddings & Batcher les embeddings, dedupliquer par hash fichier.\\
+Secrets exposes & Garder \texttt{.env} hors Git; rotation des cles.\\
+RLS Supabase & Ajouter policies RLS si exposition directe Supabase frontend.\\
+PDF cache & Ajouter cleanup cron serveur.\\
+\bottomrule
+\end{longtable}
+
+\section{Conclusion}
+
+n7chat est organise comme une plateforme agentique educative: FastAPI securise l'acces, Supabase structure les donnees, Storage gere les fichiers, pgvector permet la recherche semantique, et LangGraph orchestre les agents SQL/RAG/PDF. Les roles etudiant, enseignant et admin ont chacun des workflows clairs, avec un control panel Streamlit pour valider les fonctionnalites avant le frontend final.
+
+\end{document}

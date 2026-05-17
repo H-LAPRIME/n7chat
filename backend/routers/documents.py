@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 
 from backend.flows.document_extract_flow import extract_text_from_bytes
-from backend.flows.index_flow import index_admin_document_upload
+from backend.flows.index_flow import index_admin_document_upload, resolve_admin_document_source_type
 from backend.flows.storage_flow import DOCUMENT_BUCKET, upload_request_file_with_content
 from backend.middleware.jwt_auth import get_current_user
 
@@ -33,6 +33,8 @@ async def upload_admin_document(
     title = fields.get("title") or upload["filename"]
     description = fields.get("description")
     file_type = fields.get("file_type") or upload["filename"].split(".")[-1].lower()
+    document_category = fields.get("document_category") or fields.get("category") or "admin_document"
+    source_type = resolve_admin_document_source_type(document_category)
     extracted_text = extract_text_from_bytes(
         filename=upload["filename"],
         content=content,
@@ -47,13 +49,15 @@ async def upload_admin_document(
         file_type=file_type,
         uploaded_by=user["sub"],
         description=description,
+        document_category=document_category,
     )
     return {
         "ok": True,
         "upload": upload,
         "indexing": {
             "scheduled": True,
-            "source_type": "admin_document",
+            "source_type": source_type,
+            "document_category": document_category,
             "content_chars": len(extracted_text),
         },
     }

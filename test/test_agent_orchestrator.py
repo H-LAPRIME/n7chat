@@ -1,6 +1,6 @@
 from backend.agents.graph import route_from_intent
 from backend.agents import orchestrator
-from backend.agents.orchestrator import _fallback_intent, _parse_decision
+from backend.agents.orchestrator import _fallback_intent, _fallback_plan, _parse_decision
 
 
 def test_fallback_intent_detects_core_domains():
@@ -9,6 +9,7 @@ def test_fallback_intent_detects_core_domains():
     assert _fallback_intent("mon emploi du temps demain") == "emploi_du_temps"
     assert _fallback_intent("cherche dans les cours de base de donnees") == "courses"
     assert _fallback_intent("document administratif sur les absences") == "courses"
+    assert _fallback_intent("cherche dans le fichier emploi du temps") == "courses"
     assert _fallback_intent("genere un bulletin pdf") == "pdf_report"
     assert _fallback_intent("salut") == "general"
 
@@ -22,6 +23,22 @@ def test_parse_decision_keeps_valid_json_intent():
     assert decision["intent"] == "courses"
     assert decision["confidence"] == 0.91
     assert decision["reason"] == "document search"
+
+
+def test_parse_decision_accepts_hybrid_agent_plan():
+    decision = _parse_decision(
+        '{"intent":"emploi_du_temps","confidence":0.82,"reason":"mixed","plan":[{"agent":"hybrid","purpose":"sql plus docs"}]}',
+        "mon emploi du temps",
+    )
+
+    assert decision["intent"] == "emploi_du_temps"
+    assert decision["plan"] == [{"agent": "hybrid", "purpose": "sql plus docs"}]
+
+
+def test_fallback_plan_uses_hybrid_for_mixed_timetable_documents():
+    plan = _fallback_plan("emploi_du_temps", "mon emploi du temps")
+
+    assert plan[0]["agent"] == "hybrid"
 
 
 def test_parse_decision_falls_back_for_invalid_intent():
@@ -38,6 +55,25 @@ def test_graph_routes_intents_to_expected_agent_nodes():
     assert route_from_intent({"intent": "notes"}) == "sql"
     assert route_from_intent({"intent": "absence"}) == "sql"
     assert route_from_intent({"intent": "emploi_du_temps"}) == "sql"
+    assert (
+        route_from_intent(
+            {
+                "intent": "emploi_du_temps",
+                "plan": [{"agent": "hybrid"}],
+            }
+        )
+        == "hybrid"
+    )
+    assert (
+        route_from_intent(
+            {
+                "intent": "emploi_du_temps",
+                "plan": [{"agent": "hybrid"}, {"agent": "pdf"}],
+                "executed_agents": ["hybrid"],
+            }
+        )
+        == "pdf"
+    )
     assert route_from_intent({"intent": "courses"}) == "rag"
     assert route_from_intent({"intent": "pdf_report"}) == "sql"
     assert (

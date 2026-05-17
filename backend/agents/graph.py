@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any, Literal, TypedDict
 
@@ -122,6 +123,34 @@ async def rag_node(state: AgentState) -> AgentState:
     }
 
 
+async def hybrid_node(state: AgentState) -> AgentState:
+    sql_result, rag_result = await asyncio.gather(
+        run_sql_agent(
+            message=state.get("message", ""),
+            intent=state.get("intent", "general"),
+            user=state.get("user", {}),
+        ),
+        run_rag_agent(
+            message=state.get("message", ""),
+            user=state.get("user", {}),
+        ),
+    )
+    data = dict(state.get("data", {}))
+    data["sql"] = sql_result.get("data", {})
+    data["rag"] = {"context": rag_result.get("context", "")}
+    sql_answer = (sql_result.get("answer") or "").strip()
+    rag_answer = (rag_result.get("answer") or "").strip()
+    response = "\n\n---\n\n".join(part for part in [sql_answer, rag_answer] if part)
+    return {
+        **state,
+        "response": response,
+        "data": data,
+        "sources": [*state.get("sources", []), *(rag_result.get("sources", []) or [])],
+        "error": sql_result.get("error") or rag_result.get("error"),
+        "executed_agents": [*state.get("executed_agents", []), "hybrid"],
+    }
+
+
 async def pdf_node(state: AgentState) -> AgentState:
     result = await run_pdf_agent(
         message=state.get("message", ""),
@@ -161,6 +190,7 @@ def build_graph():
     builder.add_node("orchestrator", orchestrator_node)
     builder.add_node("sql", sql_node)
     builder.add_node("rag", rag_node)
+    builder.add_node("hybrid", hybrid_node)
     builder.add_node("pdf", pdf_node)
     builder.add_node("general", general_node)
 
@@ -171,18 +201,20 @@ def build_graph():
         {
             "sql": "sql",
             "rag": "rag",
+            "hybrid": "hybrid",
             "pdf": "pdf",
             "general": "general",
             "done": END,
         },
     )
-    for node in ("sql", "rag", "pdf", "general"):
+    for node in ("sql", "rag", "hybrid", "pdf", "general"):
         builder.add_conditional_edges(
             node,
             route_from_intent,
             {
                 "sql": "sql",
                 "rag": "rag",
+                "hybrid": "hybrid",
                 "pdf": "pdf",
                 "general": "general",
                 "done": END,

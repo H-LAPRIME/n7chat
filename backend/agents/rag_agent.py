@@ -36,6 +36,7 @@ def answer_from_documents_sync(
 ) -> dict[str, Any]:
     user = user or {}
     filters = filters or {}
+    scoped_filiere = filters.get("filiere") or user.get("filiere_name")
 
     # --- vector search ---
     try:
@@ -48,9 +49,22 @@ def answer_from_documents_sync(
             # Do NOT fallback to user.get("sub") because courses are uploaded by teachers,
             # so filtering by student's user_id would yield 0 results.
             user_id=filters.get("user_id"),
-            filiere=filters.get("filiere") or user.get("filiere_name"),
+            filiere=scoped_filiere,
             file_type=filters.get("file_type"),
         )
+        if scoped_filiere and not (search_result.get("data") or []):
+            global_result = search_document_content(
+                query=message,
+                top_k=int(filters.get("top_k", 5)),
+                source_type=filters.get("source_type"),
+                source_id=filters.get("source_id"),
+                module_id=filters.get("module_id") or user.get("module_id"),
+                user_id=filters.get("user_id"),
+                filiere=None,
+                file_type=filters.get("file_type"),
+            )
+            if global_result.get("data"):
+                search_result = global_result
     except Exception as exc:
         print(f"[RAG Agent Error] {exc}")
         search_result = {"context": f"Vector search failed: {exc}", "data": []}
