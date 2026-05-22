@@ -182,13 +182,13 @@ def list_courses(
         LEFT JOIN modules m ON m.id = c.module_id
         LEFT JOIN filieres f ON f.id = m.filiere_id
         LEFT JOIN enseignants e ON e.id = c.uploaded_by
-        WHERE (%(module_id)s IS NULL OR c.module_id = %(module_id)s)
-          AND (%(file_type)s IS NULL OR c.file_type::text = %(file_type)s)
+        WHERE (%(module_id)s::uuid IS NULL OR c.module_id = %(module_id)s::uuid)
+          AND (%(file_type)s::text IS NULL OR c.file_type::text = %(file_type)s::text)
           AND (
-            %(search)s IS NULL
-            OR c.title ILIKE %(search_pattern)s
-            OR c.description ILIKE %(search_pattern)s
-            OR m.name ILIKE %(search_pattern)s
+            %(search)s::text IS NULL
+            OR c.title ILIKE %(search_pattern)s::text
+            OR c.description ILIKE %(search_pattern)s::text
+            OR m.name ILIKE %(search_pattern)s::text
           )
         ORDER BY c.created_at DESC
         LIMIT %(limit)s
