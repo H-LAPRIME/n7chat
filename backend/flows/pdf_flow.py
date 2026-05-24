@@ -39,6 +39,7 @@ async def build_pdf_report_flow(
     result = await run_pdf_agent(
         message=message,
         user=user,
+        history=history or [],
         data_context=data_context or {},
     )
     artifact = result.get("artifact") if isinstance(result.get("artifact"), dict) else {}

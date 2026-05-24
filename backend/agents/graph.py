@@ -58,10 +58,7 @@ def _default_plan(intent: str) -> list[dict[str, str]]:
     if intent in RAG_INTENTS:
         return [{"agent": "rag", "purpose": "Search indexed documents."}]
     if intent in PDF_INTENTS:
-        return [
-            {"agent": "sql", "purpose": "Collect profile, notes, and absences."},
-            {"agent": "pdf", "purpose": "Generate the requested PDF report."},
-        ]
+        return [{"agent": "pdf", "purpose": "Generate a PDF report from the available context."}]
     return [{"agent": "general", "purpose": "Answer or ask for clarification."}]
 
 
@@ -203,7 +200,12 @@ async def pdf_node(state: AgentState) -> AgentState:
     result = await build_pdf_report_flow(
         message=state.get("message", ""),
         user=state.get("user", {}),
-        data_context=state.get("data", {}),
+        history=state.get("history", []),
+        data_context={
+            **state.get("data", {}),
+            "sources": state.get("sources", []),
+            "current_response": state.get("response", ""),
+        },
     )
     elapsed = time.perf_counter() - t0
     artifact = result.get("artifact")

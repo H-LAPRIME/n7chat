@@ -82,7 +82,7 @@ def list_users(
         """
         SELECT id, email, role, is_active, last_login, created_at, updated_at
         FROM users
-        WHERE (%(role)s IS NULL OR role::text = %(role)s)
+        WHERE (%(role)s::text IS NULL OR role::text = %(role)s::text)
         ORDER BY created_at DESC
         LIMIT %(limit)s
         """,

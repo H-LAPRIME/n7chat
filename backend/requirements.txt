@@ -5,6 +5,8 @@ psycopg[binary]
 supabase
 mistralai
 reportlab
+Jinja2
+WeasyPrint
 langchain-core
 langgraph
 pytest

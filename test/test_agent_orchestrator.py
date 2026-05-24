@@ -35,10 +35,49 @@ def test_parse_decision_accepts_hybrid_agent_plan():
     assert decision["plan"] == [{"agent": "hybrid", "purpose": "sql plus docs"}]
 
 
+def test_parse_decision_keeps_rag_pdf_plan_for_document_report():
+    decision = _parse_decision(
+        '{"intent":"pdf_report","confidence":0.88,"reason":"document report","plan":[{"agent":"rag","purpose":"docs"},{"agent":"pdf","purpose":"render"}]}',
+        "genere un rapport pdf sur le reglement",
+    )
+
+    assert [step["agent"] for step in decision["plan"]] == ["rag", "pdf"]
+
+
+def test_pdf_request_uses_previous_timetable_context_for_plan():
+    decision = _parse_decision(
+        '{"intent":"pdf_report","confidence":0.9,"reason":"pdf","plan":[{"agent":"pdf","purpose":"render"}]}',
+        "genere sous format pdf",
+        history=[
+            {
+                "role": "assistant",
+                "content": "Voici l'emploi du temps pour la filiere GEER avec les seances du lundi au samedi.",
+            }
+        ],
+    )
+
+    assert [step["agent"] for step in decision["plan"]] == ["hybrid", "pdf"]
+
+
+def test_timetable_decision_forces_pdf_suggestion_when_llm_says_false():
+    decision = _parse_decision(
+        '{"intent":"emploi_du_temps","confidence":0.9,"reason":"schedule","suggest_pdf":false,"plan":[{"agent":"hybrid","purpose":"schedule"}]}',
+        "qulle lemploi du temps de geer",
+    )
+
+    assert decision["suggest_pdf"] is True
+
+
 def test_fallback_plan_uses_hybrid_for_mixed_timetable_documents():
     plan = _fallback_plan("emploi_du_temps", "mon emploi du temps")
 
     assert plan[0]["agent"] == "hybrid"
+
+
+def test_fallback_pdf_plan_uses_matching_collector():
+    assert [step["agent"] for step in _fallback_plan("pdf_report", "genere un rapport pdf sur ce cours")] == ["rag", "pdf"]
+    assert [step["agent"] for step in _fallback_plan("pdf_report", "genere un rapport pdf emploi du temps")] == ["hybrid", "pdf"]
+    assert [step["agent"] for step in _fallback_plan("pdf_report", "genere mon bulletin pdf")] == ["pdf"]
 
 
 def test_parse_decision_falls_back_for_invalid_intent():
@@ -75,10 +114,16 @@ def test_graph_routes_intents_to_expected_agent_nodes():
         == "pdf"
     )
     assert route_from_intent({"intent": "courses"}) == "rag"
-    assert route_from_intent({"intent": "pdf_report"}) == "sql"
+    assert route_from_intent({"intent": "pdf_report"}) == "pdf"
     assert (
         route_from_intent(
             {"intent": "pdf_report", "plan": [{"agent": "sql"}, {"agent": "pdf"}], "executed_agents": ["sql"]}
+        )
+        == "pdf"
+    )
+    assert (
+        route_from_intent(
+            {"intent": "pdf_report", "plan": [{"agent": "rag"}, {"agent": "pdf"}], "executed_agents": ["rag"]}
         )
         == "pdf"
     )

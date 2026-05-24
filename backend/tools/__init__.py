@@ -13,6 +13,8 @@ from backend.tools.pdf_tool import (
     PDF_TOOLS,
     build_bulletin_pdf,
     build_notes_pdf,
+    build_timetable_pdf,
+    render_dynamic_pdf,
 )
 from backend.tools.rag_tool import (
     RAG_TOOLS,
@@ -56,6 +58,8 @@ __all__ = [
     "search_document_content",
     "build_notes_pdf",
     "build_bulletin_pdf",
+    "build_timetable_pdf",
+    "render_dynamic_pdf",
     "format_emploi_table",
     "format_events_list",
     "to_markdown_table",

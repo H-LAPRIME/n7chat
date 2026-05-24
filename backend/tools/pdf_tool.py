@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any
@@ -9,14 +10,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import (
-    HRFlowable,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-)
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 try:
     from langchain_core.tools import tool
@@ -30,6 +24,8 @@ except ImportError:
 TEAL = colors.HexColor("#1D9E75")
 LIGHT = colors.HexColor("#F1EFE8")
 BORDER = colors.HexColor("#B4B2A9")
+TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates"
+PDF_TEMPLATE = "pdf_report.html"
 
 
 def _success(data: Any, **extra: Any) -> dict[str, Any]:
@@ -40,19 +36,9 @@ def _failure(error: Exception | str, **extra: Any) -> dict[str, Any]:
     return {"ok": False, "data": None, "error": str(error), **extra}
 
 
-def _pdf_path(prefix: str) -> str:
-    return str(Path(gettempdir()) / f"{prefix}-{uuid4()}.pdf")
-
-
-def _base_doc(filename: str) -> SimpleDocTemplate:
-    return SimpleDocTemplate(
-        filename,
-        pagesize=A4,
-        leftMargin=2 * cm,
-        rightMargin=2 * cm,
-        topMargin=2 * cm,
-        bottomMargin=2 * cm,
-    )
+def _pdf_path(prefix: str = "report") -> str:
+    safe_prefix = "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in prefix.lower())
+    return str(Path(gettempdir()) / f"{safe_prefix or 'report'}-{uuid4()}.pdf")
 
 
 def _student_name(student: dict[str, Any]) -> str:
@@ -83,7 +69,7 @@ def _module_name(row: dict[str, Any]) -> str:
     modules = row.get("modules")
     if isinstance(modules, dict):
         return str(modules.get("name") or "")
-    return ""
+    return str(row.get("name") or "")
 
 
 def _module_semester(row: dict[str, Any]) -> str:
@@ -93,6 +79,14 @@ def _module_semester(row: dict[str, Any]) -> str:
     if isinstance(modules, dict):
         return str(modules.get("semester") or "")
     return ""
+
+
+def _teacher_name(row: dict[str, Any]) -> str:
+    return " ".join(
+        part
+        for part in [row.get("teacher_first_name"), row.get("teacher_last_name")]
+        if part
+    )
 
 
 def _table_style() -> TableStyle:
@@ -109,41 +103,216 @@ def _table_style() -> TableStyle:
     )
 
 
-def build_notes_pdf(student: dict[str, Any], notes: list[dict[str, Any]]) -> str:
-    filename = _pdf_path("notes")
-    doc = _base_doc(filename)
+def _normalize_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "Oui" if value else "Non"
+    return str(value)
+
+
+def _fallback_reportlab_render(report_spec: dict[str, Any], filename: str) -> None:
+    doc = SimpleDocTemplate(
+        filename,
+        pagesize=A4,
+        leftMargin=2 * cm,
+        rightMargin=2 * cm,
+        topMargin=2 * cm,
+        bottomMargin=2 * cm,
+    )
     styles = getSampleStyleSheet()
-    story = []
+    story: list[Any] = []
 
-    name = _student_name(student) or "Etudiant"
-    story.append(Paragraph(f"Releve de notes - {name}", styles["Title"]))
-    story.append(
-        Paragraph(
-            f"Filiere : {_student_filiere(student)} | Niveau : {_student_level(student)}",
-            styles["Normal"],
-        )
-    )
-    story.append(Spacer(1, 0.4 * cm))
-    story.append(HRFlowable(width="100%", color=TEAL, thickness=1))
-    story.append(Spacer(1, 0.4 * cm))
+    story.append(Paragraph(html.escape(str(report_spec.get("title") or "Rapport")), styles["Title"]))
+    subtitle = report_spec.get("subtitle")
+    if subtitle:
+        story.append(Paragraph(html.escape(str(subtitle)), styles["Normal"]))
+    story.append(Spacer(1, 0.5 * cm))
 
-    rows = [["Module", "Type", "Note", "Coeff.", "Date"]]
-    rows.extend(
-        [
-            _module_name(note),
-            str(note.get("exam_type", "")),
-            str(note.get("score", "")),
-            str(note.get("coefficient", "")),
-            str(note.get("published_at", ""))[:10],
-        ]
-        for note in notes
-    )
+    for section in report_spec.get("sections", []):
+        if not isinstance(section, dict):
+            continue
+        story.append(Paragraph(html.escape(str(section.get("title") or "Section")), styles["Heading2"]))
+        if section.get("summary"):
+            story.append(Paragraph(html.escape(str(section["summary"])), styles["Normal"]))
+            story.append(Spacer(1, 0.2 * cm))
 
-    table = Table(rows, colWidths=[6 * cm, 3 * cm, 2.5 * cm, 2.5 * cm, 3 * cm])
-    table.setStyle(_table_style())
-    story.append(table)
+        if section.get("type") == "table":
+            columns = section.get("columns") or []
+            rows = section.get("rows") or []
+            table_data = [[str(column.get("label") or column.get("key") or "") for column in columns]]
+            for row in rows:
+                if isinstance(row, dict):
+                    table_data.append([_normalize_cell(row.get(str(column.get("key")))) for column in columns])
+                elif isinstance(row, list):
+                    table_data.append([_normalize_cell(cell) for cell in row])
+
+            if len(table_data) == 1:
+                table_data.append(["Aucune donnee"] + [""] * max(len(table_data[0]) - 1, 0))
+            table = Table(table_data, repeatRows=1)
+            table.setStyle(_table_style())
+            story.append(table)
+        elif section.get("type") == "text":
+            for item in section.get("items") or []:
+                for paragraph in str(item).splitlines():
+                    if paragraph.strip():
+                        story.append(Paragraph(html.escape(paragraph.strip()), styles["Normal"]))
+        else:
+            for item in section.get("items") or []:
+                story.append(Paragraph(f"- {html.escape(_normalize_cell(item))}", styles["Normal"]))
+        story.append(Spacer(1, 0.5 * cm))
+
     doc.build(story)
+
+
+def render_dynamic_pdf(report_spec: dict[str, Any]) -> str:
+    """Render a dynamic report JSON spec to PDF.
+
+    Preferred path is Jinja2 HTML -> WeasyPrint PDF. If WeasyPrint is not
+    installed or native libraries are missing, ReportLab renders the same spec.
+    """
+    filename = _pdf_path(str(report_spec.get("slug") or report_spec.get("type") or "report"))
+    try:
+        from jinja2 import Environment, FileSystemLoader, select_autoescape
+        from weasyprint import HTML
+
+        env = Environment(
+            loader=FileSystemLoader(str(TEMPLATE_DIR)),
+            autoescape=select_autoescape(["html", "xml"]),
+        )
+        template = env.get_template(PDF_TEMPLATE)
+        html_content = template.render(report=report_spec)
+        HTML(string=html_content, base_url=str(TEMPLATE_DIR)).write_pdf(filename)
+    except Exception:
+        _fallback_reportlab_render(report_spec, filename)
     return filename
+
+
+def build_notes_report_spec(student: dict[str, Any], notes: list[dict[str, Any]]) -> dict[str, Any]:
+    name = _student_name(student) or "Etudiant"
+    return {
+        "type": "notes",
+        "slug": "notes",
+        "title": f"Releve de notes - {name}",
+        "subtitle": f"Filiere : {_student_filiere(student)} | Niveau : {_student_level(student)}",
+        "sections": [
+            {
+                "title": "Notes",
+                "type": "table",
+                "columns": [
+                    {"key": "module", "label": "Module"},
+                    {"key": "exam_type", "label": "Type"},
+                    {"key": "score", "label": "Note"},
+                    {"key": "coefficient", "label": "Coeff."},
+                    {"key": "published_at", "label": "Date"},
+                ],
+                "rows": [
+                    {
+                        "module": _module_name(note),
+                        "exam_type": note.get("exam_type"),
+                        "score": note.get("score"),
+                        "coefficient": note.get("coefficient"),
+                        "published_at": str(note.get("published_at") or "")[:10],
+                    }
+                    for note in notes
+                ],
+            }
+        ],
+    }
+
+
+def build_bulletin_report_spec(
+    student: dict[str, Any],
+    notes: list[dict[str, Any]],
+    absences: list[dict[str, Any]],
+) -> dict[str, Any]:
+    name = _student_name(student) or "Etudiant"
+    return {
+        "type": "bulletin",
+        "slug": "bulletin",
+        "title": "Bulletin academique",
+        "subtitle": f"{name} - {_student_filiere(student)} - {_student_level(student)}",
+        "sections": [
+            build_notes_report_spec(student, notes)["sections"][0],
+            {
+                "title": "Absences",
+                "type": "table",
+                "columns": [
+                    {"key": "module", "label": "Module"},
+                    {"key": "date", "label": "Date"},
+                    {"key": "justified", "label": "Justifiee"},
+                ],
+                "rows": [
+                    {
+                        "module": _module_name(absence),
+                        "date": str(absence.get("date") or "")[:10],
+                        "justified": bool(absence.get("justified")),
+                    }
+                    for absence in absences
+                ],
+            },
+        ],
+    }
+
+
+def build_timetable_report_spec(
+    student: dict[str, Any],
+    modules: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    name = _student_name(student) or "Etudiant"
+    return {
+        "type": "timetable",
+        "slug": "timetable",
+        "title": f"Emploi du temps - {name}",
+        "subtitle": f"Filiere : {_student_filiere(student)} | Niveau : {_student_level(student)}",
+        "sections": [
+            {
+                "title": "Modules",
+                "type": "table",
+                "columns": [
+                    {"key": "module", "label": "Module"},
+                    {"key": "code", "label": "Code"},
+                    {"key": "semester", "label": "Semestre"},
+                    {"key": "teacher", "label": "Enseignant"},
+                ],
+                "rows": [
+                    {
+                        "module": _module_name(module),
+                        "code": module.get("module_code") or module.get("code"),
+                        "semester": _module_semester(module),
+                        "teacher": _teacher_name(module),
+                    }
+                    for module in modules
+                ],
+            },
+            {
+                "title": "Evenements a venir",
+                "type": "table",
+                "columns": [
+                    {"key": "title", "label": "Titre"},
+                    {"key": "event_type", "label": "Type"},
+                    {"key": "start_date", "label": "Debut"},
+                    {"key": "end_date", "label": "Fin"},
+                    {"key": "location", "label": "Lieu"},
+                ],
+                "rows": [
+                    {
+                        "title": event.get("title"),
+                        "event_type": event.get("event_type"),
+                        "start_date": str(event.get("start_date") or "")[:16],
+                        "end_date": str(event.get("end_date") or "")[:16],
+                        "location": event.get("location"),
+                    }
+                    for event in events
+                ],
+            },
+        ],
+    }
+
+
+def build_notes_pdf(student: dict[str, Any], notes: list[dict[str, Any]]) -> str:
+    return render_dynamic_pdf(build_notes_report_spec(student, notes))
 
 
 def build_bulletin_pdf(
@@ -151,53 +320,7 @@ def build_bulletin_pdf(
     notes: list[dict[str, Any]],
     absences: list[dict[str, Any]],
 ) -> str:
-    filename = _pdf_path("bulletin")
-    doc = _base_doc(filename)
-    styles = getSampleStyleSheet()
-    story = []
-
-    name = _student_name(student) or "Etudiant"
-    story.append(Paragraph("Bulletin academique", styles["Title"]))
-    story.append(
-        Paragraph(
-            f"{name} - {_student_filiere(student)} - {_student_level(student)}",
-            styles["Normal"],
-        )
-    )
-    story.append(Spacer(1, 0.5 * cm))
-
-    story.append(Paragraph("Notes", styles["Heading2"]))
-    note_rows = [["Module", "Type", "Note", "Semestre"]]
-    note_rows.extend(
-        [
-            _module_name(note),
-            str(note.get("exam_type", "")),
-            str(note.get("score", "")),
-            _module_semester(note),
-        ]
-        for note in notes
-    )
-    notes_table = Table(note_rows, colWidths=[7 * cm, 3 * cm, 2.5 * cm, 2.5 * cm])
-    notes_table.setStyle(_table_style())
-    story.append(notes_table)
-    story.append(Spacer(1, 0.5 * cm))
-
-    story.append(Paragraph("Absences", styles["Heading2"]))
-    absence_rows = [["Module", "Date", "Justifiee"]]
-    absence_rows.extend(
-        [
-            _module_name(absence),
-            str(absence.get("date", ""))[:10],
-            "Oui" if absence.get("justified") else "Non",
-        ]
-        for absence in absences
-    )
-    absences_table = Table(absence_rows, colWidths=[8 * cm, 4 * cm, 3 * cm])
-    absences_table.setStyle(_table_style())
-    story.append(absences_table)
-
-    doc.build(story)
-    return filename
+    return render_dynamic_pdf(build_bulletin_report_spec(student, notes, absences))
 
 
 def build_timetable_pdf(
@@ -205,91 +328,19 @@ def build_timetable_pdf(
     modules: list[dict[str, Any]],
     events: list[dict[str, Any]],
 ) -> str:
-    filename = _pdf_path("timetable")
-    doc = _base_doc(filename)
-    styles = getSampleStyleSheet()
-    story = []
-
-    name = _student_name(student) or "Etudiant"
-    story.append(Paragraph(f"Emploi du temps - {name}", styles["Title"]))
-    story.append(
-        Paragraph(
-            f"Filiere : {_student_filiere(student)} | Niveau : {_student_level(student)}",
-            styles["Normal"],
-        )
-    )
-    story.append(Spacer(1, 0.4 * cm))
-    story.append(HRFlowable(width="100%", color=TEAL, thickness=1))
-    story.append(Spacer(1, 0.4 * cm))
-
-    story.append(Paragraph("Modules", styles["Heading2"]))
-    module_rows = [["Module", "Code", "Semestre", "Enseignant"]]
-    module_rows.extend(
-        [
-            str(module.get("module_name") or module.get("name") or ""),
-            str(module.get("module_code") or module.get("code") or ""),
-            str(module.get("semester") or ""),
-            " ".join(
-                part
-                for part in [module.get("teacher_first_name"), module.get("teacher_last_name")]
-                if part
-            ),
-        ]
-        for module in modules
-    )
-    modules_table = Table(module_rows, colWidths=[6 * cm, 3 * cm, 2.5 * cm, 5 * cm])
-    modules_table.setStyle(_table_style())
-    story.append(modules_table)
-    story.append(Spacer(1, 0.5 * cm))
-
-    story.append(Paragraph("Evenements a venir", styles["Heading2"]))
-    event_rows = [["Titre", "Type", "Debut", "Fin", "Lieu"]]
-    event_rows.extend(
-        [
-            str(event.get("title") or ""),
-            str(event.get("event_type") or ""),
-            str(event.get("start_date") or "")[:16],
-            str(event.get("end_date") or "")[:16],
-            str(event.get("location") or ""),
-        ]
-        for event in events
-    )
-    events_table = Table(event_rows, colWidths=[5 * cm, 2.5 * cm, 3.5 * cm, 3.5 * cm, 3 * cm])
-    events_table.setStyle(_table_style())
-    story.append(events_table)
-
-    doc.build(story)
-    return filename
+    return render_dynamic_pdf(build_timetable_report_spec(student, modules, events))
 
 
 @tool
-def build_notes_pdf_tool(
-    student: dict[str, Any],
-    notes: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Build a notes PDF and return its local file path."""
+def render_dynamic_pdf_tool(report_spec: dict[str, Any]) -> dict[str, Any]:
+    """Render any dynamic report JSON spec and return its local PDF path."""
     try:
-        path = build_notes_pdf(student, notes)
-        return _success({"file_path": path})
-    except Exception as exc:
-        return _failure(exc)
-
-
-@tool
-def build_bulletin_pdf_tool(
-    student: dict[str, Any],
-    notes: list[dict[str, Any]],
-    absences: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Build a bulletin PDF and return its local file path."""
-    try:
-        path = build_bulletin_pdf(student, notes, absences)
+        path = render_dynamic_pdf(report_spec)
         return _success({"file_path": path})
     except Exception as exc:
         return _failure(exc)
 
 
 PDF_TOOLS = [
-    build_notes_pdf_tool,
-    build_bulletin_pdf_tool,
+    render_dynamic_pdf_tool,
 ]

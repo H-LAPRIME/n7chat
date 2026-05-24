@@ -1,14 +1,8 @@
 """PDF agent.
 
-Thin async wrapper around the helpers in ``backend.tasks.pdf_llm_task``.
-Responsible for:
-  - Collecting student profile, notes, and absences via SQL tool calls.
-  - Delegating report-type inference to ``infer_report_type_task``.
-  - Calling the appropriate PDF builder (``build_notes_pdf`` / ``build_bulletin_pdf``).
-  - Assembling the response dict via ``build_pdf_answer`` / ``build_pdf_error``.
-  - Exposing the async ``run_pdf_agent`` entry-point consumed by the graph.
-
-Report-type inference and response assembly live in ``backend.tasks.pdf_llm_task``.
+Builds a generic report from the conversation context and available data.
+The PDF path should not guess a fixed academic template; it should render the
+best report it can from the context already collected by the graph.
 """
 
 from __future__ import annotations
@@ -17,23 +11,13 @@ import asyncio
 from typing import Any
 
 from backend.tasks.pdf_llm_task import (
+    build_dynamic_report_spec,
     build_pdf_answer,
     build_pdf_error,
     infer_report_type_task,
 )
-from backend.tools.pdf_tool import build_bulletin_pdf, build_notes_pdf, build_timetable_pdf
-from backend.tools.sql_tool import (
-    get_filiere_modules,
-    get_student_absences,
-    get_student_notes,
-    get_student_profile,
-    get_upcoming_events,
-)
-
-
-# ---------------------------------------------------------------------------
-# Tool helper
-# ---------------------------------------------------------------------------
+from backend.tools.pdf_tool import render_dynamic_pdf
+from backend.tools.sql_tool import get_student_profile
 
 
 def _tool_result(tool_obj: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -46,9 +30,11 @@ def _infer_report_type(message: str, requested_type: str | None = None) -> str:
     return infer_report_type_task(message, requested_type)
 
 
-# ---------------------------------------------------------------------------
-# Sync runner
-# ---------------------------------------------------------------------------
+def _last_assistant_response(history: list[dict[str, Any]] | None) -> str:
+    return next(
+        (str(item.get("content", "")) for item in reversed(history or []) if item.get("role") == "assistant"),
+        "",
+    )
 
 
 def build_pdf_report_sync(
@@ -56,20 +42,25 @@ def build_pdf_report_sync(
     user: dict[str, Any] | None = None,
     report_type: str | None = None,
     data_context: dict[str, Any] | None = None,
+    history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     user = user or {}
     data_context = data_context or {}
     sql_context = data_context.get("sql", {}) if isinstance(data_context, dict) else {}
     student = user.get("student") or {}
-    student_id = user.get("student_id") or student.get("id")
     user_id = user.get("sub") or user.get("id")
-    filiere_id = user.get("filiere_id") or student.get("filiere_id")
 
-    # Report type — delegated to task layer
     selected_type = infer_report_type_task(message, report_type)
+    enriched_context = {
+        **data_context,
+        "last_assistant_response": (
+            data_context.get("current_response")
+            or data_context.get("last_assistant_response")
+            or _last_assistant_response(history)
+        ),
+    }
 
     try:
-        # --- student profile ---
         profile_context = sql_context.get("profile")
         if isinstance(profile_context, dict) and profile_context.get("data"):
             student = profile_context["data"]
@@ -80,69 +71,18 @@ def build_pdf_report_sync(
         if not student:
             student = user
 
-        # --- notes ---
-        notes_result = sql_context.get("notes")
-        if not isinstance(notes_result, dict):
-            notes_result = (
-                _tool_result(get_student_notes, {"student_id": student_id})
-                if student_id
-                else {"data": []}
-            )
+        report_spec = build_dynamic_report_spec(
+            message=message,
+            selected_type=selected_type,
+            student=student,
+            data_context=enriched_context,
+        )
+        file_path = render_dynamic_pdf(report_spec)
 
-        # --- absences ---
-        absences_result = sql_context.get("absences")
-        if not isinstance(absences_result, dict):
-            absences_result = (
-                _tool_result(get_student_absences, {"student_id": student_id})
-                if student_id
-                else {"data": []}
-            )
-
-        notes = notes_result.get("data") or []
-        absences = absences_result.get("data") or []
-        modules: list[dict[str, Any]] = []
-        events: list[dict[str, Any]] = []
-
-        # --- PDF generation ---
-        if selected_type == "timetable":
-            modules_result = sql_context.get("modules")
-            if not isinstance(modules_result, dict):
-                modules_result = (
-                    _tool_result(
-                        get_filiere_modules,
-                        {"filiere_id": filiere_id, "semester": user.get("semester")},
-                    )
-                    if filiere_id
-                    else {"data": []}
-                )
-            events_result = sql_context.get("events")
-            if not isinstance(events_result, dict):
-                events_result = _tool_result(
-                    get_upcoming_events,
-                    {
-                        "limit": 20,
-                        "filiere_id": filiere_id,
-                        "is_staff": (user.get("role") or "").lower() in {"teacher", "admin"},
-                    },
-                )
-            modules = modules_result.get("data") or []
-            events = events_result.get("data") or []
-            file_path = build_timetable_pdf(student, modules, events)
-        elif selected_type == "bulletin":
-            file_path = build_bulletin_pdf(student, notes, absences)
-        else:
-            file_path = build_notes_pdf(student, notes)
-
-        # --- response assembly (task layer) ---
-        return build_pdf_answer(selected_type, file_path, student, notes, absences, modules, events)
+        return build_pdf_answer(selected_type, file_path, report_spec, student, enriched_context)
 
     except Exception as exc:
         return build_pdf_error(exc)
-
-
-# ---------------------------------------------------------------------------
-# Async entry-point (used by graph nodes and routers)
-# ---------------------------------------------------------------------------
 
 
 async def run_pdf_agent(
@@ -150,6 +90,7 @@ async def run_pdf_agent(
     user: dict[str, Any] | None = None,
     report_type: str | None = None,
     data_context: dict[str, Any] | None = None,
+    history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return await asyncio.to_thread(
         build_pdf_report_sync,
@@ -157,4 +98,5 @@ async def run_pdf_agent(
         user or {},
         report_type,
         data_context or {},
+        history or [],
     )

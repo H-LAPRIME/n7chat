@@ -23,11 +23,26 @@ import json
 
 _mistral_client = _task._mistral_client
 PUBLIC_FALLBACK_SOURCE_TYPES = ("admin_document", "timetable", "news", "event")
+TIMETABLE_KEYWORDS = ("emploi", "planning", "horaire", "seance", "séance", "timetable", "schedule")
 
 
 # ---------------------------------------------------------------------------
 # Sync runner (calls retrieval tool then task layer)
 # ---------------------------------------------------------------------------
+
+
+def _is_timetable_query(message: str, filters: dict[str, Any]) -> bool:
+    source_type = (filters.get("source_type") or "").lower()
+    if source_type in {"timetable", "emploi_du_temps"}:
+        return True
+    normalized = message.lower()
+    return any(keyword in normalized for keyword in TIMETABLE_KEYWORDS)
+
+
+def _tool_result(tool_obj: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    if hasattr(tool_obj, "invoke"):
+        return tool_obj.invoke(payload)
+    return tool_obj(**payload)
 
 
 def answer_from_documents_sync(
@@ -38,8 +53,9 @@ def answer_from_documents_sync(
     user = user or {}
     filters = filters or {}
     scoped_filiere_id = filters.get("filiere_id") or user.get("filiere_id")
-    scoped_filiere = filters.get("filiere") or user.get("filiere_name")
-    requested_source_type = filters.get("source_type")
+    scoped_filiere = filters.get("filiere")
+    is_timetable_query = _is_timetable_query(message, filters)
+    requested_source_type = filters.get("source_type") or ("timetable" if is_timetable_query else None)
     role = (user.get("role") or "student").lower()
 
     # --- vector search ---
@@ -58,6 +74,20 @@ def answer_from_documents_sync(
             filiere=scoped_filiere,
             file_type=filters.get("file_type"),
         )
+        if is_timetable_query and not (search_result.get("data") or []):
+            search_result = search_document_content(
+                query=message,
+                top_k=int(filters.get("top_k", 5)),
+                source_type="admin_document",
+                source_id=filters.get("source_id"),
+                module_id=None,
+                filiere_id=None,
+                visibility_scope=None,
+                accessible_filiere_id=scoped_filiere_id if role not in {"teacher", "admin"} else None,
+                user_id=filters.get("user_id"),
+                filiere=None,
+                file_type=filters.get("file_type"),
+            )
         if scoped_filiere_id and not (search_result.get("data") or []) and not requested_source_type:
             public_rows = []
             public_context_parts = []
@@ -96,7 +126,10 @@ def answer_from_documents_sync(
     filiere_id = user.get("filiere_id") or user.get("student", {}).get("filiere_id")
     if filiere_id:
         try:
-            modules_data = get_filiere_modules(filiere_id=filiere_id, semester=user.get("semester"))
+            modules_data = _tool_result(
+                get_filiere_modules,
+                {"filiere_id": filiere_id, "semester": user.get("semester")},
+            )
             structured_context = "\n--- Structured Modules Data ---\n" + json.dumps(modules_data, ensure_ascii=False)
             search_result["context"] = search_result.get("context", "") + structured_context
         except Exception as e:

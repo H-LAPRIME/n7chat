@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      @page {
+        size: A4;
+        margin: 20mm;
+      }
+
+      body {
+        color: #172033;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      h1 {
+        color: #0f5f4d;
+        font-size: 24px;
+        margin: 0 0 6px;
+      }
+
+      h2 {
+        color: #172033;
+        font-size: 16px;
+        margin: 24px 0 8px;
+      }
+
+      .subtitle {
+        color: #596273;
+        margin-bottom: 16px;
+      }
+
+      .rule {
+        border-top: 2px solid #1d9e75;
+        margin: 14px 0 18px;
+      }
+
+      table {
+        border-collapse: collapse;
+        margin-top: 8px;
+        width: 100%;
+      }
+
+      th {
+        background: #1d9e75;
+        color: white;
+        font-weight: 700;
+        text-align: left;
+      }
+
+      th,
+      td {
+        border: 1px solid #b4b2a9;
+        padding: 7px 8px;
+        vertical-align: top;
+      }
+
+      tr:nth-child(even) td {
+        background: #f1efe8;
+      }
+
+      .empty {
+        color: #6b7280;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>{{ report.title }}</h1>
+    {% if report.subtitle %}
+      <div class="subtitle">{{ report.subtitle }}</div>
+    {% endif %}
+    <div class="rule"></div>
+
+    {% for section in report.sections %}
+      <section>
+        <h2>{{ section.title }}</h2>
+        {% if section.summary %}
+          <p>{{ section.summary }}</p>
+        {% endif %}
+
+        {% if section.type == "table" %}
+          <table>
+            <thead>
+              <tr>
+                {% for column in section.columns %}
+                  <th>{{ column.label }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% if section.rows %}
+                {% for row in section.rows %}
+                  <tr>
+                    {% for column in section.columns %}
+                      <td>{{ row.get(column.key, "") }}</td>
+                    {% endfor %}
+                  </tr>
+                {% endfor %}
+              {% else %}
+                <tr>
+                  <td class="empty" colspan="{{ section.columns|length }}">Aucune donnee.</td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        {% elif section.type == "text" %}
+          {% for item in section.items %}
+            <p>{{ item | replace("\n", "<br>") | safe }}</p>
+          {% endfor %}
+        {% else %}
+          {% if section.items %}
+            <ul>
+              {% for item in section.items %}
+                <li>{{ item }}</li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="empty">Aucune donnee.</p>
+          {% endif %}
+        {% endif %}
+      </section>
+    {% endfor %}
+  </body>
+</html>

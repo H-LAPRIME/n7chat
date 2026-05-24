@@ -1,14 +1,13 @@
 from pathlib import Path
 
 from backend.agents.pdf_agent import _infer_report_type, build_pdf_report_sync
+from backend.tasks.pdf_llm_task import build_dynamic_report_spec
 from backend.tools.pdf_tool import build_bulletin_pdf, build_notes_pdf, build_timetable_pdf
 
 
 def test_infer_report_type():
-    assert _infer_report_type("genere mes notes pdf") == "notes"
-    assert _infer_report_type("genere mon bulletin") == "bulletin"
-    assert _infer_report_type("horaire sous format pdf") == "timetable"
-    assert _infer_report_type("emploi du temps en PDF") == "timetable"
+    assert _infer_report_type("genere mes notes pdf") == "report"
+    assert _infer_report_type("resume la derniere reponse en pdf") == "summary"
     assert _infer_report_type("anything", "bulletin") == "bulletin"
 
 
@@ -52,27 +51,51 @@ def test_build_timetable_pdf_creates_file():
     assert Path(path).suffix == ".pdf"
 
 
+def test_dynamic_report_spec_is_section_based():
+    spec = build_dynamic_report_spec(
+        message="genere un rapport avec notes et absences",
+        selected_type="bulletin",
+        student={"first_name": "Sara", "last_name": "Test", "filiere_name": "GI"},
+        notes=[{"module_name": "Algo", "exam_type": "cc", "score": 15}],
+        absences=[{"module_name": "Algo", "date": "2026-05-05", "justified": True}],
+    )
+
+    assert spec["type"] == "bulletin"
+    assert [section["title"] for section in spec["sections"]] == ["Notes", "Absences"]
+    assert spec["sections"][0]["rows"][0]["module_name"] == "Algo"
+
+
+def test_dynamic_report_spec_supports_document_reports():
+    spec = build_dynamic_report_spec(
+        message="genere un rapport PDF sur ce document administratif",
+        selected_type="document",
+        student={"first_name": "Sara", "last_name": "Test"},
+        notes=[],
+        absences=[],
+        data_context={
+            "rag": {"context": "Reglement: les inscriptions se font en septembre."},
+            "sources": [{"title": "Reglement", "source_type": "admin_document", "source_name": "reglement.pdf"}],
+        },
+    )
+
+    assert spec["type"] == "document"
+    assert [section["title"] for section in spec["sections"]] == ["Contenu disponible", "Sources"]
+
+
 def test_build_pdf_report_sync_uses_tools(monkeypatch):
     monkeypatch.setattr(
         "backend.agents.pdf_agent.get_student_profile",
         lambda **_: {"ok": True, "data": {"first_name": "Sara", "last_name": "Test"}},
     )
-    monkeypatch.setattr(
-        "backend.agents.pdf_agent.get_student_notes",
-        lambda **_: {"ok": True, "data": []},
-    )
-    monkeypatch.setattr(
-        "backend.agents.pdf_agent.get_student_absences",
-        lambda **_: {"ok": True, "data": []},
-    )
-
     result = build_pdf_report_sync(
         "bulletin pdf",
         {"id": "user-1", "student_id": "student-1"},
+        data_context={"last_assistant_response": "Voici un bilan academique structure."},
     )
 
     assert result["ok"] is True
-    assert result["artifact"]["type"] == "bulletin"
+    assert result["artifact"]["type"] == "report"
+    assert result["artifact"]["report_spec"]["sections"][0]["title"] == "Synthese"
     assert Path(result["artifact"]["file_path"]).exists()
 
 
@@ -81,29 +104,88 @@ def test_build_pdf_report_sync_generates_timetable(monkeypatch):
         "backend.agents.pdf_agent.get_student_profile",
         lambda **_: {"ok": True, "data": {"first_name": "Omar", "last_name": "Test", "filiere_id": "filiere-1"}},
     )
-    monkeypatch.setattr(
-        "backend.agents.pdf_agent.get_student_notes",
-        lambda **_: {"ok": True, "data": []},
-    )
-    monkeypatch.setattr(
-        "backend.agents.pdf_agent.get_student_absences",
-        lambda **_: {"ok": True, "data": []},
-    )
-    monkeypatch.setattr(
-        "backend.agents.pdf_agent.get_filiere_modules",
-        lambda **_: {"ok": True, "data": [{"module_name": "Algo", "module_code": "GI-S3-ALG"}]},
-    )
-    monkeypatch.setattr(
-        "backend.agents.pdf_agent.get_upcoming_events",
-        lambda **_: {"ok": True, "data": [{"title": "Conference IA"}]},
-    )
-
     result = build_pdf_report_sync(
         "horaire sous format pdf",
         {"id": "user-1", "student_id": "student-1", "filiere_id": "filiere-1"},
+        data_context={
+            "sql": {
+                "modules": {"ok": True, "data": [{"module_name": "Algo", "module_code": "GI-S3-ALG"}]},
+                "events": {"ok": True, "data": [{"title": "Conference IA"}]},
+            }
+        },
     )
 
     assert result["ok"] is True
-    assert result["artifact"]["type"] == "timetable"
-    assert result["data"]["modules"] == [{"module_name": "Algo", "module_code": "GI-S3-ALG"}]
+    assert result["artifact"]["type"] == "report"
+    section_titles = [section["title"] for section in result["data"]["report"]["sections"]]
+    assert "Modules" in section_titles
+    assert Path(result["artifact"]["file_path"]).exists()
+
+
+def test_build_pdf_report_sync_uses_rag_context_for_document_report():
+    result = build_pdf_report_sync(
+        "genere un rapport pdf sur ce document administratif",
+        {"id": "user-1"},
+        data_context={
+            "rag": {"context": "Reglement des examens et calendrier administratif."},
+            "sources": [{"title": "Reglement examens", "source_type": "admin_document"}],
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["artifact"]["type"] == "report"
+    assert result["data"]["report"]["sections"][0]["title"] == "Contenu disponible"
+    assert Path(result["artifact"]["file_path"]).exists()
+
+
+def test_build_pdf_report_sync_cleans_and_structures_last_answer():
+    answer = """Je ne peux pas generer un emploi du temps au format PDF, car les donnees manquantes.
+
+---
+
+Voici l'emploi du temps pour GEER1.
+
+### Resume de l'emploi du temps
+
+| Jour | 08h30 - 10h30 | 10h30 - 12h30 |
+| --- | --- | --- |
+| Lundi | Machines Electriques | Communication |
+| Mardi | Identification et Regulation | Traitement du Signal |
+
+### Notes
+
+- Salles principales : 3 et 8.
+- Version provisoire.
+"""
+    result = build_pdf_report_sync(
+        "genere sous format pdf",
+        {"id": "user-1", "first_name": "Amal", "last_name": "Benali"},
+        data_context={"last_assistant_response": answer},
+    )
+
+    sections = result["data"]["report"]["sections"]
+    assert result["ok"] is True
+    assert sections[0]["type"] == "list"
+    assert "Je ne peux pas" not in str(sections)
+    assert any(section["type"] == "table" and section["title"] == "Resume de l'emploi du temps" for section in sections)
+    assert any(section["title"] == "Notes" for section in sections)
+
+
+def test_build_pdf_report_sync_exports_last_timetable_response():
+    result = build_pdf_report_sync(
+        "genere sous format pdf",
+        {"id": "user-1", "first_name": "Amal", "last_name": "Benali"},
+        data_context={
+            "rag": {"context": "EMPLOI DU TEMPS 2025/2026 FI - GEER\nLundi: Machines Electriques."},
+            "sources": [{"title": "Emploi de temp", "source_type": "timetable"}],
+            "last_assistant_response": "Voici l'emploi du temps GEER organise par jour.",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["artifact"]["type"] == "report"
+    section_titles = [section["title"] for section in result["data"]["report"]["sections"]]
+    assert "Synthese" in section_titles
+    assert "Contenu disponible" not in section_titles
+    assert "Notes" not in section_titles
     assert Path(result["artifact"]["file_path"]).exists()

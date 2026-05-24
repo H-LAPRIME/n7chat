@@ -272,7 +272,7 @@ def get_filiere_modules(filiere_id: str, semester: int | None = None) -> dict[st
     FROM modules m
     LEFT JOIN enseignants e ON e.id = m.teacher_id
     WHERE m.filiere_id = %(filiere_id)s
-      AND (%(semester)s IS NULL OR m.semester = %(semester)s)
+      AND (%(semester)s::int IS NULL OR m.semester = %(semester)s::int)
     ORDER BY m.semester, m.name
     """
     try:
@@ -405,8 +405,8 @@ def query_modules(
       f.code AS filiere_code
     FROM modules m
     LEFT JOIN filieres f ON f.id = m.filiere_id
-    WHERE (%(teacher_id)s IS NULL OR m.teacher_id = %(teacher_id)s)
-      AND (%(filiere_id)s IS NULL OR m.filiere_id = %(filiere_id)s)
+    WHERE (%(teacher_id)s::uuid IS NULL OR m.teacher_id = %(teacher_id)s::uuid)
+      AND (%(filiere_id)s::uuid IS NULL OR m.filiere_id = %(filiere_id)s::uuid)
     ORDER BY m.semester, m.name
     """
     return [
@@ -466,7 +466,7 @@ def query_emploi(filiere_id: str, semester: int | None = None) -> list[dict[str,
     FROM modules m
     LEFT JOIN enseignants e ON e.id = m.teacher_id
     WHERE m.filiere_id = %(filiere_id)s
-      AND (%(semester)s IS NULL OR m.semester = %(semester)s)
+      AND (%(semester)s::int IS NULL OR m.semester = %(semester)s::int)
     ORDER BY m.semester, m.name
     """
     return [

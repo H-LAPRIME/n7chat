@@ -92,8 +92,8 @@ STATIC_CAPABILITIES = {
         },
         "pdf_report": {
             "route": "pdf",
-            "tables": ["students", "notes", "absences", "generated_reports"],
-            "description": "Generate notes or bulletin PDF reports.",
+            "tables": ["students", "notes", "absences", "modules", "events", "document_chunks", "generated_reports"],
+            "description": "Generate dynamic PDF reports from structured data, indexed documents, or both.",
         },
         "profile": {
             "route": "sql",
@@ -140,7 +140,9 @@ Classify the user's message into exactly one intent:
                     administrative docs, RAG search.
 - absence         : absences, justification, attendance.
 - pdf_report      : user EXPLICITLY asks to generate / download / print /
-                    export a PDF report or bulletin.
+                    export a PDF report. This can be notes, absences,
+                    timetable, modules, courses, events, administrative
+                    documents, summaries, or mixed content.
 - profile         : user asks about their profile, filiere, department, or teachers.
 - general         : greetings, unclear request, or anything outside the above.
 
@@ -152,7 +154,7 @@ Routing rules:
 - If the user mentions uploaded files, PDF, document, support, archive,
   administrative note, or a timetable document, prefer courses/rag even when
   words like notes or emploi_du_temps are present.
-- ONLY route to pdf_report when the user *explicitly* requests PDF generation.
+- ONLY route to pdf_report when the user *explicitly* requests PDF/report generation.
   A question like "show me my notes" is intent=notes, NOT pdf_report.
 
 ═══════════════════════════════════════════════════════
@@ -170,12 +172,13 @@ Look at the last assistant message in history:
 ═══════════════════════════════════════════════════════
 After classifying intent, decide whether the response is complex/structured
 enough to deserve a PDF offer. Set suggest_pdf=true when ALL of:
-  1. intent is notes, absence, or pdf_report-adjacent (but NOT pdf_report itself)
-  2. The data will be a multi-row table (all notes, full absence list, bulletin)
+  1. intent is notes, absence, emploi_du_temps, courses, profile, or another
+     report-adjacent request (but NOT pdf_report itself)
+  2. The answer will be structured, multi-row, document-based, or long enough
+     to be useful as a report
   3. The user did NOT already receive a PDF offer in the last assistant message
      (avoid repeating the offer).
 Set suggest_pdf=false when:
-  - intent is emploi_du_temps, courses, or general
   - The question is narrow (e.g. "what is my average in Maths?")
   - The last assistant message already offered a PDF
   - intent is pdf_report (we are already generating it)
@@ -420,10 +423,17 @@ def _fallback_intent(message: str) -> Intent:
 def _fallback_plan(intent: str, message: str) -> list[dict[str, str]]:
     text = message.lower()
     if intent == "pdf_report":
-        return [
-            {"agent": "sql", "purpose": "Collect student profile, notes, and absences."},
-            {"agent": "pdf", "purpose": "Generate the requested PDF report."},
-        ]
+        if any(word in text for word in ["cours", "course", "document", "support", "chapitre", "news", "administratif", "fichier", "archive"]):
+            return [
+                {"agent": "rag", "purpose": "Collect indexed document content for the requested report."},
+                {"agent": "pdf", "purpose": "Generate the requested PDF report."},
+            ]
+        if any(word in text for word in ["emploi", "planning", "horaire", "module", "evenement", "event", "conference"]):
+            return [
+                {"agent": "hybrid", "purpose": "Collect structured data and indexed documents for the requested report."},
+                {"agent": "pdf", "purpose": "Generate the requested PDF report."},
+            ]
+        return [{"agent": "pdf", "purpose": "Generate a PDF report from the available context."}]
     if intent in {"notes", "absence"}:
         return [{"agent": "sql", "purpose": f"Fetch structured data for {intent}."}]
     if intent == "emploi_du_temps":
@@ -450,6 +460,23 @@ def _fallback_plan(intent: str, message: str) -> list[dict[str, str]]:
     return [{"agent": "general", "purpose": "Answer or ask for clarification."}]
 
 
+def _last_assistant_content(history: list[dict[str, Any]] | None) -> str:
+    return next(
+        (str(m.get("content", "")) for m in reversed(history or []) if m.get("role") == "assistant"),
+        "",
+    )
+
+
+def _message_with_pdf_history_context(message: str, history: list[dict[str, Any]] | None) -> str:
+    lowered = message.lower()
+    if not any(word in lowered for word in ["pdf", "rapport", "format", "telecharger", "télécharger", "genere", "génère"]):
+        return message
+    last_assistant = _last_assistant_content(history)
+    if not last_assistant:
+        return message
+    return f"{message}\n\nContexte de la derniere reponse:\n{last_assistant[:4000]}"
+
+
 def _normalize_plan(plan: Any, intent: str, message: str) -> list[dict[str, str]]:
     valid_agents = {"sql", "rag", "hybrid", "pdf", "general"}
     normalized = []
@@ -472,14 +499,10 @@ def _normalize_plan(plan: Any, intent: str, message: str) -> list[dict[str, str]
 
     if intent == "pdf_report":
         agents = [step["agent"] for step in normalized]
-        if "sql" not in agents and "hybrid" not in agents:
-            normalized.insert(
-                0,
-                {
-                    "agent": "sql",
-                    "purpose": "Collect structured data needed for the PDF report.",
-                },
-            )
+        if not any(agent in agents for agent in ["sql", "rag", "hybrid"]):
+            fallback_collectors = [step for step in _fallback_plan(intent, message) if step["agent"] != "pdf"]
+            if fallback_collectors:
+                normalized = [*fallback_collectors, *normalized]
         if "pdf" not in agents:
             normalized.append({"agent": "pdf", "purpose": "Generate the PDF report."})
     if intent == "emploi_du_temps":
@@ -501,19 +524,16 @@ def _normalize_plan(plan: Any, intent: str, message: str) -> list[dict[str, str]
 
 def _fallback_suggest_pdf(intent: str, message: str, history: list[dict[str, Any]] | None) -> bool:
     """Heuristic fallback: should we offer a PDF after a normal answer?"""
-    if intent not in {"notes", "absence"}:
+    if intent not in {"notes", "absence", "emploi_du_temps", "courses", "profile"}:
         return False
     # Don't repeat the offer if the last assistant message already had one
-    last_assistant = next(
-        (m.get("content", "") for m in reversed(history or []) if m.get("role") == "assistant"),
-        "",
-    )
+    last_assistant = _last_assistant_content(history)
     if "pdf" in last_assistant.lower() or "rapport" in last_assistant.lower():
         return False
     # Broad request → worth offering
     text = message.lower()
-    broad_keywords = ["toutes", "tous", "all", "mes notes", "my notes", "liste", "bilan"]
-    return any(kw in text for kw in broad_keywords) or intent == "absence"
+    broad_keywords = ["toutes", "tous", "all", "mes notes", "my notes", "liste", "bilan", "resume", "rapport", "complet", "completement"]
+    return any(kw in text for kw in broad_keywords) or intent in {"absence", "emploi_du_temps", "courses"}
 
 
 def _parse_decision(
@@ -526,6 +546,7 @@ def _parse_decision(
     intent = payload.get("intent", "general")
     if intent not in VALID_INTENTS:
         intent = _fallback_intent(message)
+    planning_message = _message_with_pdf_history_context(message, history) if intent == "pdf_report" else message
 
     confidence = payload.get("confidence", 0.0)
     try:
@@ -533,12 +554,14 @@ def _parse_decision(
     except (TypeError, ValueError):
         confidence = 0.0
 
-    # suggest_pdf: trust the LLM; fall back to heuristic if missing/invalid
+    fallback_suggest_pdf = _fallback_suggest_pdf(intent, message, history)
+    # suggest_pdf: allow the LLM to opt in, but keep deterministic offers for
+    # broad report-like answers such as timetables.
     suggest_pdf_raw = payload.get("suggest_pdf")
     if isinstance(suggest_pdf_raw, bool):
-        suggest_pdf = suggest_pdf_raw
+        suggest_pdf = suggest_pdf_raw or fallback_suggest_pdf
     else:
-        suggest_pdf = _fallback_suggest_pdf(intent, message, history)
+        suggest_pdf = fallback_suggest_pdf
 
     # Never suggest PDF when we are already generating one
     if intent == "pdf_report":
@@ -548,7 +571,7 @@ def _parse_decision(
         "intent": intent,
         "confidence": confidence,
         "reason": str(payload.get("reason") or ""),
-        "plan": _normalize_plan(payload.get("plan"), intent, message),
+        "plan": _normalize_plan(payload.get("plan"), intent, planning_message),
         "suggest_pdf": suggest_pdf,
     }  # type: ignore[typeddict-item]
 

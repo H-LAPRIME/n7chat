@@ -1,7 +1,7 @@
 "use client";
 
 import { useConversations } from "@/context/ConversationContext";
-import { MessageSquare, BookOpen, Calendar, User, Plus, MessageCircle, MoreVertical, Trash2, FileUp } from "lucide-react";
+import { MessageSquare, BookOpen, Calendar, User, Plus, MessageCircle, MoreVertical, Trash2, FileUp, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import NextLink from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -19,6 +19,7 @@ export default function Sidebar() {
     { href: "/dashboard/chat", label: "Chat", icon: MessageSquare },
     { href: "/dashboard/courses", label: "Courses", icon: BookOpen },
     { href: "/dashboard/events", label: "Events", icon: Calendar },
+    ...((user?.role === "admin") ? [{ href: "/dashboard/admin", label: "Admin", icon: ShieldCheck }] : []),
     ...((user?.role === "admin") ? [{ href: "/dashboard/documents", label: "Documents", icon: FileUp }] : []),
     { href: "/dashboard/profile", label: "Profile", icon: User },
   ];
