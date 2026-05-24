@@ -16,6 +16,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from backend.middleware.access_control import access_policy_text
+from backend.tasks.llm_retry import call_with_retry
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,6 +34,15 @@ If required identifiers are missing, state what is missing.
 Keep answers concise and useful for a university student or teacher.
 Prefer the provided Markdown formatted context for tables and lists. You may
 add a short explanation before or after it, but do not destroy the table shape.
+
+FORMATTING RULES:
+- When "Formatted context for final answer" contains Markdown headings/tables,
+  preserve that structure and use it as the main answer.
+- Do not expose raw JSON, raw SQL, internal field names, IDs, or technical keys.
+- Use clear French labels, short headings, and compact tables.
+- If the user asks a verification question after profile/modules data
+  (for example "is X my teacher?"), answer directly after the table in one short sentence.
+- Avoid long closing paragraphs. Add only one helpful sentence when useful.
 
 CRITICAL DATE HANDLING:
 Always compare the dates in the data against `{current_date}`. If the user asks for a specific timeframe like "cette semaine" (this week) or "demain" (tomorrow), explicitly state whether there are events in that timeframe. If there are no events in that timeframe, clearly say so, but then YOU SHOULD mention the next upcoming events as a helpful note (e.g. "Tu n'as pas d'examen cette semaine. Cependant, ton prochain examen est le 10 juin").
@@ -126,13 +136,15 @@ def answer_from_sql_task(
     )
 
     try:
-        response = _mistral_client().chat.complete(
-            model=DEFAULT_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.2,
+        response = call_with_retry(
+            lambda: _mistral_client().chat.complete(
+                model=DEFAULT_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+            )
         )
         answer = _extract_content(response).strip()
         return {"ok": True, "answer": answer, "data": data, "error": None}

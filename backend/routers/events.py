@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
@@ -10,6 +11,21 @@ from backend.middleware.jwt_auth import get_current_user
 from backend.models.events import EventCreate, EventUpdate
 
 router = APIRouter()
+
+
+def _normalize_uuid(value: str | None, field_name: str) -> str | None:
+    if value is None:
+        return None
+    clean = value.strip()
+    if not clean:
+        return None
+    try:
+        return str(UUID(clean))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{field_name} must be a valid UUID",
+        ) from exc
 
 def _require_staff(user: dict[str, Any]) -> None:
     if (user.get("role") or "").lower() not in {"teacher", "admin"}:
@@ -29,6 +45,41 @@ def _assert_event_write_access(event_id: str, user: dict[str, Any]) -> dict[str,
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Event write access denied")
 
 
+def _audience_payload(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    scope = payload.get("visibility_scope") or "public"
+    filiere_id = _normalize_uuid(payload.get("filiere_id"), "filiere_id")
+    module_id = _normalize_uuid(payload.get("module_id"), "module_id")
+    if scope == "public":
+        filiere_id = None
+        module_id = None
+    elif scope == "filiere":
+        if not filiere_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="filiere_id is required")
+        module_id = None
+    elif scope == "module":
+        if not module_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="module_id is required")
+        module = fetch_one("SELECT filiere_id, teacher_id FROM modules WHERE id = %(id)s", {"id": module_id})
+        if not module:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="module_id not found")
+        if (user.get("role") or "").lower() == "teacher" and str(module.get("teacher_id")) != str(user.get("teacher_id")):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Module not assigned")
+        filiere_id = str(module["filiere_id"]) if module.get("filiere_id") else filiere_id
+    if scope == "filiere" and (user.get("role") or "").lower() == "teacher":
+        owns_filiere = fetch_one(
+            """
+            SELECT id
+            FROM modules
+            WHERE filiere_id = %(filiere_id)s AND teacher_id = %(teacher_id)s
+            LIMIT 1
+            """,
+            {"filiere_id": filiere_id, "teacher_id": user.get("teacher_id")},
+        )
+        if not owns_filiere:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Filiere not assigned")
+    return {"visibility_scope": scope, "filiere_id": filiere_id, "module_id": module_id}
+
+
 @router.get("")
 def list_events(
     user: dict[str, Any] = Depends(get_current_user),
@@ -37,13 +88,25 @@ def list_events(
 ) -> list[dict[str, Any]]:
     rows = fetch_all(
         """
-        SELECT id, title, description, event_type, start_date, end_date, location, created_by, created_at
+        SELECT id, title, description, event_type, start_date, end_date, location,
+               visibility_scope, filiere_id, module_id, created_by, created_at
         FROM events
         WHERE (%(upcoming_only)s = FALSE OR start_date >= CURRENT_TIMESTAMP)
+          AND (
+            %(is_staff)s = TRUE
+            OR visibility_scope = 'public'
+            OR (visibility_scope = 'filiere' AND filiere_id = %(filiere_id)s::uuid)
+            OR (visibility_scope = 'module' AND filiere_id = %(filiere_id)s::uuid)
+          )
         ORDER BY start_date ASC
         LIMIT %(limit)s
         """,
-        {"upcoming_only": upcoming_only, "limit": limit},
+        {
+            "upcoming_only": upcoming_only,
+            "limit": limit,
+            "is_staff": (user.get("role") or "").lower() in {"teacher", "admin"},
+            "filiere_id": user.get("filiere_id"),
+        },
     )
     return [dict(row) for row in rows]
 
@@ -58,10 +121,17 @@ def create_event(
     if body.end_date and body.end_date < body.start_date:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_date must be after start_date")
 
+    audience = _audience_payload(body.model_dump(), user)
     row = fetch_one(
         """
-        INSERT INTO events (title, description, event_type, start_date, end_date, location, created_by)
-        VALUES (%(title)s, %(description)s, %(event_type)s, %(start_date)s, %(end_date)s, %(location)s, %(created_by)s)
+        INSERT INTO events (
+          title, description, event_type, start_date, end_date, location,
+          visibility_scope, filiere_id, module_id, created_by
+        )
+        VALUES (
+          %(title)s, %(description)s, %(event_type)s, %(start_date)s, %(end_date)s, %(location)s,
+          %(visibility_scope)s, %(filiere_id)s, %(module_id)s, %(created_by)s
+        )
         RETURNING *
         """,
         {
@@ -71,6 +141,7 @@ def create_event(
             "start_date": body.start_date.replace(tzinfo=None),
             "end_date": body.end_date.replace(tzinfo=None) if body.end_date else None,
             "location": body.location,
+            **audience,
             "created_by": user["sub"],
         },
     )
@@ -98,6 +169,15 @@ def update_event(
     for key in ("start_date", "end_date"):
         if payload.get(key):
             payload[key] = payload[key].replace(tzinfo=None)
+
+    if any(key in payload for key in ("visibility_scope", "filiere_id", "module_id")):
+        current = fetch_one(
+            "SELECT visibility_scope, filiere_id, module_id FROM events WHERE id = %(id)s",
+            {"id": event_id},
+        )
+        merged = {**dict(current or {}), **payload}
+        audience = _audience_payload(merged, user)
+        payload.update(audience)
 
     if not payload:
         row = fetch_one("SELECT * FROM events WHERE id = %(id)s", {"id": event_id})

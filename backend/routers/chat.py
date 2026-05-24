@@ -27,12 +27,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import tempfile
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.agents.graph import run_agent
 from backend.db.supabase import execute, fetch_all, fetch_one, get_supabase_client
@@ -82,19 +84,27 @@ def _save_message(
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Insert a message row and return it."""
-    row = fetch_one(
-        """
-        INSERT INTO messages (conversation_id, sender_type, content, message_type)
-        VALUES (%(conversation_id)s, %(sender_type)s, %(content)s, %(message_type)s)
-        RETURNING *
-        """,
-        {
-            "conversation_id": conversation_id,
-            "sender_type": sender_type,
-            "content": content,
-            "message_type": message_type,
-        }
-    )
+    params = {
+        "conversation_id": conversation_id,
+        "sender_type": sender_type,
+        "content": content,
+        "message_type": message_type,
+    }
+    query = """
+    INSERT INTO messages (conversation_id, sender_type, content, message_type)
+    VALUES (%(conversation_id)s, %(sender_type)s, %(content)s, %(message_type)s)
+    RETURNING *
+    """
+    try:
+        row = fetch_one(query, params)
+    except Exception as exc:
+        # Older databases only know text/json. Keep the SSE alive until schema.sql
+        # is applied, then persisted history will retain the markdown type too.
+        if message_type != "text" and "message_type_enum" in str(exc):
+            params["message_type"] = "text"
+            row = fetch_one(query, params)
+        else:
+            raise
     return dict(row) if row else {}
 
 
@@ -114,10 +124,14 @@ def _load_history(conversation_id: str, limit: int = 12) -> list[dict[str, Any]]
     rows = fetch_all(
         """
         SELECT sender_type, content
-        FROM messages
-        WHERE conversation_id = %(conv_id)s
+        FROM (
+            SELECT sender_type, content, created_at
+            FROM messages
+            WHERE conversation_id = %(conv_id)s
+            ORDER BY created_at DESC
+            LIMIT %(limit)s
+        ) recent_messages
         ORDER BY created_at ASC
-        LIMIT %(limit)s
         """,
         {"conv_id": conversation_id, "limit": limit},
     )
@@ -130,6 +144,19 @@ def _load_history(conversation_id: str, limit: int = 12) -> list[dict[str, Any]]
         }
         for row in rows
     ]
+
+
+def _message_format(content: str) -> str:
+    lines = [line.strip() for line in content.splitlines()]
+    has_table = any(line.startswith("|") and line.endswith("|") for line in lines)
+    has_heading = any(line.startswith("#") for line in lines)
+    return "markdown" if has_table or has_heading else "text"
+
+
+def _pdf_cache_path(user_id: str, filename: str) -> Path:
+    if Path(filename).name != filename or not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid PDF filename.")
+    return Path(tempfile.gettempdir()) / "n7chat-pdf-cache" / user_id / filename
 
 
 # ---------------------------------------------------------------------------
@@ -155,27 +182,50 @@ async def chat_stream(
     """
     user_id: str = user["sub"]
 
+    print(f"\n{'='*60}")
+    print(f"[CHAT] 📨 Nouveau message reçu de user={user_id[:8]}...")
+    print(f"[CHAT] 💬 Message : {body.message[:80]}{'...' if len(body.message) > 80 else ''}")
+    print(f"[CHAT] 🗂️  Conversation : {body.conversation_id}")
+
     # 1. Verify conversation ownership (raises 404 if wrong user or missing)
+    print("[CHAT] 🔐 Vérification propriétaire de la conversation...")
     _assert_conversation_owner(body.conversation_id, user_id)
+    print("[CHAT] ✅ Propriétaire vérifié.")
 
-    # 2. Persist the user's message immediately
-    _save_message(body.conversation_id, "user", body.message)
-
-    # 3. Load conversation history (before the just-saved message was added,
-    #    so the agent sees the prior exchange; the new message is passed as
-    #    the explicit `message` arg).
+    # 2. Load prior history before saving the new message. The current message
+    #    is passed separately to the agent, so it must not be duplicated here.
+    print("[CHAT] 📜 Chargement de l'historique...")
     history = _load_history(body.conversation_id, limit=12)
+    print(f"[CHAT] ✅ Historique chargé ({len(history)} messages).")
+
+    # 3. Persist the user's message immediately.
+    print("[CHAT] 💾 Sauvegarde du message utilisateur en DB...")
+    _save_message(body.conversation_id, "user", body.message)
+    print("[CHAT] ✅ Message utilisateur sauvegardé.")
+
+    print("[CHAT] 🤖 Lancement de l'agent IA...")
+    print(f"{'='*60}")
 
     async def event_generator():
         full_response = ""
         had_error = False
+        chunk_count = 0
 
         try:
             async for chunk in run_agent(body.message, history, user):
                 if not chunk:
                     continue
+                if isinstance(chunk, dict):
+                    artifact = chunk.get("artifact")
+                    if artifact:
+                        print(f"[CHAT] 📎 Artifact généré : {artifact.get('filename', '?')}")
+                        yield f"data: {json.dumps({'artifact': artifact}, ensure_ascii=False)}\n\n"
+                    continue
                 full_response += chunk
-                yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+                chunk_count += 1
+                if chunk_count == 1:
+                    print("[CHAT] ✍️  Streaming de la réponse en cours...")
+                yield f"data: {json.dumps({'chunk': chunk, 'format': _message_format(full_response)}, ensure_ascii=False)}\n\n"
                 # Let the event loop breathe between chunks
                 await asyncio.sleep(0)
 
@@ -183,24 +233,30 @@ async def chat_stream(
             had_error = True
             error_msg = f"Erreur interne du serveur: {exc}"
             logger.exception("run_agent raised an exception: %s", exc)
+            print(f"[CHAT] ❌ Erreur agent : {exc}")
             # Surface error as an SSE event so the client can display it
             yield f"data: {json.dumps({'error': error_msg}, ensure_ascii=False)}\n\n"
             full_response = full_response or error_msg
 
         finally:
+            print(f"[CHAT] ✅ Réponse complète ({len(full_response)} chars, {chunk_count} chunks).")
             # 4. Persist the assistant's complete response
             if full_response:
+                message_type = _message_format(full_response)
+                print(f"[CHAT] 💾 Sauvegarde réponse assistant (type={message_type})...")
                 _save_message(
                     body.conversation_id,
                     "assistant",
                     full_response,
-                    message_type="text",
+                    message_type=message_type,
                 )
+                print("[CHAT] ✅ Réponse assistant sauvegardée.")
 
             # 5. Touch conversation timestamp
             _touch_conversation(body.conversation_id)
 
             # 6. Signal end of stream
+            print(f"[CHAT] 🏁 Stream terminé.\n{'='*60}\n")
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -211,6 +267,22 @@ async def chat_stream(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.get("/artifacts/pdf/{filename}")
+def download_pdf_artifact(
+    filename: str,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> FileResponse:
+    """Download a temporary PDF artifact owned by the current user."""
+    path = _pdf_cache_path(str(user["sub"]), filename)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found or expired.")
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=filename,
     )
 
 

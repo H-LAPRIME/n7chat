@@ -30,6 +30,8 @@ def upsert_document_chunk(
     source_table: str | None = None,
     source_url: str | None = None,
     module_id: str | None = None,
+    filiere_id: str | None = None,
+    visibility_scope: str = "public",
     user_id: str | None = None,
     chunk_index: int,
     content: str,
@@ -48,14 +50,14 @@ def upsert_document_chunk(
                 """
                 INSERT INTO document_chunks (
                   id, source_type, source_id, source_table, source_url,
-                  module_id, user_id, chunk_index, content, embedding,
+                  module_id, filiere_id, visibility_scope, user_id, chunk_index, content, embedding,
                   title, source_name, module_name, filiere, file_type, metadata
                 )
                 VALUES (
                   COALESCE(%(id)s, uuid_generate_v4()), %(source_type)s,
                   %(source_id)s, %(source_table)s, %(source_url)s,
-                  %(module_id)s, %(user_id)s, %(chunk_index)s, %(content)s,
-                  %(embedding)s::vector, %(title)s, %(source_name)s,
+                  %(module_id)s, %(filiere_id)s, %(visibility_scope)s, %(user_id)s, %(chunk_index)s,
+                  %(content)s, %(embedding)s::vector, %(title)s, %(source_name)s,
                   %(module_name)s, %(filiere)s, %(file_type)s,
                   %(metadata)s::jsonb
                 )
@@ -65,6 +67,8 @@ def upsert_document_chunk(
                   source_table = EXCLUDED.source_table,
                   source_url = EXCLUDED.source_url,
                   module_id = EXCLUDED.module_id,
+                  filiere_id = EXCLUDED.filiere_id,
+                  visibility_scope = EXCLUDED.visibility_scope,
                   user_id = EXCLUDED.user_id,
                   chunk_index = EXCLUDED.chunk_index,
                   content = EXCLUDED.content,
@@ -84,6 +88,8 @@ def upsert_document_chunk(
                     "source_table": source_table,
                     "source_url": source_url,
                     "module_id": module_id,
+                    "filiere_id": filiere_id,
+                    "visibility_scope": visibility_scope,
                     "user_id": user_id,
                     "chunk_index": chunk_index,
                     "content": content,
@@ -112,6 +118,9 @@ def search_document_chunks(
     source_type: str | None = None,
     source_id: str | None = None,
     module_id: str | None = None,
+    filiere_id: str | None = None,
+    visibility_scope: str | None = None,
+    accessible_filiere_id: str | None = None,
     user_id: str | None = None,
     filiere: str | None = None,
     file_type: str | None = None,
@@ -131,6 +140,39 @@ def search_document_chunks(
     if module_id:
         filters.append("module_id = %(module_id)s")
         params["module_id"] = module_id
+    if filiere_id:
+        filters.append("filiere_id = %(filiere_id)s")
+        params["filiere_id"] = filiere_id
+    if visibility_scope:
+        filters.append("visibility_scope = %(visibility_scope)s")
+        params["visibility_scope"] = visibility_scope
+    if accessible_filiere_id:
+        filters.append(
+            """
+            (
+              (
+                source_type = 'course'
+                AND (
+                  filiere_id = %(accessible_filiere_id)s
+                  OR module_id IN (
+                    SELECT id FROM modules WHERE filiere_id = %(accessible_filiere_id)s
+                  )
+                )
+              )
+              OR (
+                source_type <> 'course'
+                AND (
+                  visibility_scope = 'public'
+                  OR filiere_id = %(accessible_filiere_id)s
+                  OR module_id IN (
+                    SELECT id FROM modules WHERE filiere_id = %(accessible_filiere_id)s
+                  )
+                )
+              )
+            )
+            """
+        )
+        params["accessible_filiere_id"] = accessible_filiere_id
     if user_id:
         filters.append("user_id = %(user_id)s")
         params["user_id"] = user_id
@@ -154,6 +196,8 @@ def search_document_chunks(
                   source_table,
                   source_url,
                   module_id,
+                  filiere_id,
+                  visibility_scope,
                   user_id,
                   chunk_index,
                   content,
@@ -206,6 +250,8 @@ def upsert_course_chunk(
     *,
     course_id: str,
     module_id: str | None,
+    filiere_id: str | None = None,
+    visibility_scope: str = "filiere",
     chunk_index: int,
     content: str,
     embedding: Sequence[float],
@@ -221,6 +267,8 @@ def upsert_course_chunk(
         source_id=course_id,
         source_table="courses",
         module_id=module_id,
+        filiere_id=filiere_id,
+        visibility_scope=visibility_scope,
         chunk_index=chunk_index,
         content=content,
         embedding=embedding,
@@ -243,6 +291,9 @@ def search_course_chunks(
     match_count: int = 5,
     course_id: str | None = None,
     module_id: str | None = None,
+    filiere_id: str | None = None,
+    visibility_scope: str | None = None,
+    accessible_filiere_id: str | None = None,
     filiere: str | None = None,
 ) -> list[dict[str, Any]]:
     return search_document_chunks(
@@ -251,6 +302,9 @@ def search_course_chunks(
         source_type="course",
         source_id=course_id,
         module_id=module_id,
+        filiere_id=filiere_id,
+        visibility_scope=visibility_scope,
+        accessible_filiere_id=accessible_filiere_id,
         filiere=filiere,
     )
 

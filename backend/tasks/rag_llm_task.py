@@ -15,6 +15,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from backend.middleware.access_control import access_policy_text
+from backend.tasks.llm_retry import call_with_retry
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -114,13 +115,15 @@ def answer_from_documents_task(
     )
 
     try:
-        response = _mistral_client().chat.complete(
-            model=DEFAULT_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.2,
+        response = call_with_retry(
+            lambda: _mistral_client().chat.complete(
+                model=DEFAULT_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+            )
         )
         answer = _extract_content(response).strip()
         return {

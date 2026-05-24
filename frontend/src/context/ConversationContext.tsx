@@ -1,7 +1,7 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { Conversation, Message } from "@/lib/types";
+import React, { createContext, useCallback, useContext, useState, useEffect, ReactNode } from "react";
+import { Conversation } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
 import { useAuth } from "./AuthContext";
 
@@ -22,23 +22,24 @@ export function ConversationProvider({ children }: { children: ReactNode }) {
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const { user } = useAuth();
 
-  const loadConversations = async () => {
+  const loadConversations = useCallback(async () => {
     if (!user) return;
     try {
-      const data = await fetchApi("/chat/conversations");
+      const data = await fetchApi<Conversation[]>("/chat/conversations");
       setConversations(data);
       // Optional: automatically select the most recent if none is selected
     } catch (e) {
       console.error("Failed to load conversations", e);
     }
-  };
-
-  useEffect(() => {
-    loadConversations();
   }, [user]);
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadConversations();
+  }, [loadConversations]);
+
   const createConversation = async (title: string) => {
-    const newConv = await fetchApi("/chat/conversations", {
+    const newConv = await fetchApi<Conversation>("/chat/conversations", {
       method: "POST",
       body: JSON.stringify({ title }),
     });
@@ -56,7 +57,7 @@ export function ConversationProvider({ children }: { children: ReactNode }) {
   };
 
   const renameConversation = async (id: string, title: string) => {
-    const updated = await fetchApi(`/chat/conversations/${id}`, {
+    const updated = await fetchApi<Conversation>(`/chat/conversations/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ title }),
     });

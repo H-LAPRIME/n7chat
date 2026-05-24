@@ -283,7 +283,11 @@ def get_filiere_modules(filiere_id: str, semester: int | None = None) -> dict[st
 
 
 @tool
-def get_upcoming_events(limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
+def get_upcoming_events(
+    limit: int = DEFAULT_LIMIT,
+    filiere_id: str | None = None,
+    is_staff: bool = False,
+) -> dict[str, Any]:
     """Return upcoming school events, exams, holidays, meetings, and conferences."""
     query = """
     SELECT
@@ -296,11 +300,24 @@ def get_upcoming_events(limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
       location
     FROM events
     WHERE start_date >= CURRENT_TIMESTAMP
+      AND (
+        %(is_staff)s = TRUE
+        OR visibility_scope = 'public'
+        OR filiere_id = %(filiere_id)s::uuid
+        OR module_id IN (SELECT id FROM modules WHERE filiere_id = %(filiere_id)s::uuid)
+      )
     ORDER BY start_date ASC
     LIMIT %(limit)s
     """
     try:
-        rows = fetch_all(query, {"limit": _normalize_limit(limit)})
+        rows = fetch_all(
+            query,
+            {
+                "limit": _normalize_limit(limit),
+                "filiere_id": filiere_id,
+                "is_staff": is_staff,
+            },
+        )
         return _success(rows, query)
     except Exception as exc:
         return _failure(exc, query)

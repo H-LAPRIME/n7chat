@@ -37,9 +37,8 @@ async def build_pdf_report_flow(
 ) -> dict[str, Any]:
     """Build a PDF and keep it temporarily in a per-user server cache."""
     result = await run_pdf_agent(
-        message,
-        history or [],
-        user,
+        message=message,
+        user=user,
         data_context=data_context or {},
     )
     artifact = result.get("artifact") if isinstance(result.get("artifact"), dict) else {}
@@ -56,17 +55,22 @@ async def build_pdf_report_flow(
         shutil.copy2(local_path, cached_path)
 
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+    download_url = f"/chat/artifacts/pdf/{cached_path.name}"
     updated_artifact = {
         **artifact,
+        "file_name": cached_path.name,
         "file_path": str(cached_path),
+        "download_url": download_url,
+        "mime_type": "application/pdf",
         "storage": "server_cache",
         "expires_at": expires_at.isoformat(),
     }
     return {
         **result,
+        "answer": f"Le PDF {artifact.get('type', 'rapport')} est pret.",
         "artifact": updated_artifact,
         "file_path": str(cached_path),
-        "file_url": None,
+        "file_url": download_url,
         "storage": "server_cache",
         "expires_at": expires_at.isoformat(),
     }

@@ -34,6 +34,9 @@ async def upload_admin_document(
     description = fields.get("description")
     file_type = fields.get("file_type") or upload["filename"].split(".")[-1].lower()
     document_category = fields.get("document_category") or fields.get("category") or "admin_document"
+    visibility_scope = fields.get("visibility_scope") or "public"
+    filiere_id = fields.get("filiere_id") or None
+    module_id = fields.get("module_id") or None
     source_type = resolve_admin_document_source_type(document_category)
     extracted_text = extract_text_from_bytes(
         filename=upload["filename"],
@@ -50,6 +53,9 @@ async def upload_admin_document(
         uploaded_by=user["sub"],
         description=description,
         document_category=document_category,
+        visibility_scope=visibility_scope,
+        filiere_id=filiere_id,
+        module_id=module_id,
     )
     return {
         "ok": True,
@@ -58,6 +64,9 @@ async def upload_admin_document(
             "scheduled": True,
             "source_type": source_type,
             "document_category": document_category,
+            "visibility_scope": visibility_scope,
+            "filiere_id": filiere_id,
+            "module_id": module_id,
             "content_chars": len(extracted_text),
         },
     }

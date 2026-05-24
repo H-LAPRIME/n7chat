@@ -30,7 +30,16 @@ export interface Message {
   sender_type: "user" | "assistant" | "system";
   content: string;
   message_type: string;
+  artifact?: ChatArtifact | null;
   created_at: string;
+}
+
+export interface ChatArtifact {
+  type: string;
+  file_name?: string;
+  download_url?: string;
+  mime_type?: string;
+  expires_at?: string;
 }
 
 export interface Course {
@@ -40,6 +49,7 @@ export interface Course {
   description: string | null;
   file_url: string;
   file_type: string;
+  index_status?: "pending" | "indexed" | "failed" | string;
   created_at: string;
   module_name: string | null;
   teacher_first_name: string | null;
@@ -53,6 +63,13 @@ export interface Module {
   semester: number;
 }
 
+export interface Filiere {
+  id: string;
+  name: string;
+  code: string;
+  department_name?: string | null;
+}
+
 export interface Event {
   id: string;
   title: string;
@@ -61,6 +78,9 @@ export interface Event {
   start_date: string;
   end_date: string | null;
   location: string | null;
+  visibility_scope?: "public" | "filiere" | "module";
+  filiere_id?: string | null;
+  module_id?: string | null;
   created_by: string;
   created_at: string;
 }

@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { fetchApi } from "@/lib/api";
+import { User } from "@/lib/types";
 import { User as UserIcon, Camera, Save, Mail, Briefcase, Phone, MapPin } from "lucide-react";
 
 export default function ProfilePage() {
   const { user, setUser } = useAuth();
+  const canEditProfile = user?.role === "student" || user?.role === "teacher";
   const [phone, setPhone] = useState(user?.phone || "");
   const [address, setAddress] = useState(user?.address || "");
   const [office, setOffice] = useState(user?.office || "");
@@ -15,15 +17,21 @@ export default function ProfilePage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEditProfile) {
+      setMessage("This account type has no editable profile fields.");
+      return;
+    }
     setSaving(true);
     setMessage("");
     
     try {
-      const payload: any = { phone: phone || null };
+      const payload: { phone: string | null; address?: string | null; office?: string | null } = {
+        phone: phone || null,
+      };
       if (user?.role === "student") payload.address = address || null;
       if (user?.role === "teacher") payload.office = office || null;
 
-      const updated = await fetchApi("/profile/me", {
+      const updated = await fetchApi<User>("/profile/me", {
         method: "PATCH",
         body: JSON.stringify(payload)
       });
@@ -31,7 +39,7 @@ export default function ProfilePage() {
       setUser(updated);
       setMessage("Profile updated successfully");
       setTimeout(() => setMessage(""), 3000);
-    } catch (e) {
+    } catch {
       setMessage("Failed to update profile");
     } finally {
       setSaving(false);
@@ -75,6 +83,7 @@ export default function ProfilePage() {
           <div className="bg-white p-8 rounded-2xl border border-border shadow-sm">
             <h3 className="text-xl font-bold text-text mb-6">Personal Information</h3>
             
+            {canEditProfile ? (
             <form onSubmit={handleSave} className="space-y-6">
               
               <div className="space-y-4">
@@ -138,6 +147,13 @@ export default function ProfilePage() {
                 </button>
               </div>
             </form>
+            ) : (
+              <div className="rounded-xl border border-border bg-surface-2 p-5">
+                <p className="text-sm text-text-muted">
+                  Admin accounts do not have student or teacher profile fields to edit here.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>

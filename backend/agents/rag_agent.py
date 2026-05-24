@@ -22,6 +22,7 @@ from backend.tools.sql_tool import get_filiere_modules
 import json
 
 _mistral_client = _task._mistral_client
+PUBLIC_FALLBACK_SOURCE_TYPES = ("admin_document", "timetable", "news", "event")
 
 
 # ---------------------------------------------------------------------------
@@ -36,35 +37,57 @@ def answer_from_documents_sync(
 ) -> dict[str, Any]:
     user = user or {}
     filters = filters or {}
+    scoped_filiere_id = filters.get("filiere_id") or user.get("filiere_id")
     scoped_filiere = filters.get("filiere") or user.get("filiere_name")
+    requested_source_type = filters.get("source_type")
+    role = (user.get("role") or "student").lower()
 
     # --- vector search ---
     try:
         search_result = search_document_content(
             query=message,
             top_k=int(filters.get("top_k", 5)),
-            source_type=filters.get("source_type"),
+            source_type=requested_source_type,
             source_id=filters.get("source_id"),
             module_id=filters.get("module_id") or user.get("module_id"),
+            filiere_id=filters.get("filiere_id"),
+            accessible_filiere_id=scoped_filiere_id if role not in {"teacher", "admin"} else None,
             # Do NOT fallback to user.get("sub") because courses are uploaded by teachers,
             # so filtering by student's user_id would yield 0 results.
             user_id=filters.get("user_id"),
             filiere=scoped_filiere,
             file_type=filters.get("file_type"),
         )
-        if scoped_filiere and not (search_result.get("data") or []):
-            global_result = search_document_content(
-                query=message,
-                top_k=int(filters.get("top_k", 5)),
-                source_type=filters.get("source_type"),
-                source_id=filters.get("source_id"),
-                module_id=filters.get("module_id") or user.get("module_id"),
-                user_id=filters.get("user_id"),
-                filiere=None,
-                file_type=filters.get("file_type"),
-            )
-            if global_result.get("data"):
-                search_result = global_result
+        if scoped_filiere_id and not (search_result.get("data") or []) and not requested_source_type:
+            public_rows = []
+            public_context_parts = []
+            for source_type in PUBLIC_FALLBACK_SOURCE_TYPES:
+                public_result = search_document_content(
+                    query=message,
+                    top_k=max(1, int(filters.get("top_k", 5)) // 2),
+                    source_type=source_type,
+                    source_id=filters.get("source_id"),
+                    module_id=None,
+                    filiere_id=None,
+                    visibility_scope="public",
+                    accessible_filiere_id=scoped_filiere_id if role not in {"teacher", "admin"} else None,
+                    user_id=filters.get("user_id"),
+                    filiere=None,
+                    file_type=filters.get("file_type"),
+                )
+                rows = public_result.get("data") or []
+                if rows:
+                    public_rows.extend(rows)
+                    if public_result.get("context"):
+                        public_context_parts.append(public_result["context"])
+            if public_rows:
+                search_result = {
+                    "ok": True,
+                    "data": public_rows[: int(filters.get("top_k", 5))],
+                    "row_count": min(len(public_rows), int(filters.get("top_k", 5))),
+                    "context": "\n\n---\n\n".join(public_context_parts),
+                    "error": None,
+                }
     except Exception as exc:
         print(f"[RAG Agent Error] {exc}")
         search_result = {"context": f"Vector search failed: {exc}", "data": []}

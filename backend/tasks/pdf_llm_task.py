@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 
-ReportType = Literal["notes", "bulletin"]
+ReportType = Literal["notes", "bulletin", "timetable"]
 
 
 # ---------------------------------------------------------------------------
@@ -34,16 +34,18 @@ def infer_report_type_task(
     message:
         The original user question (used for keyword matching).
     explicit_type:
-        If ``"notes"`` or ``"bulletin"``, returned immediately without inspecting
-        the message.
+        If ``"notes"``, ``"bulletin"`` or ``"timetable"``, returned immediately
+        without inspecting the message.
 
     Returns
     -------
-    ``"notes"`` or ``"bulletin"``.
+    ``"notes"``, ``"bulletin"`` or ``"timetable"``.
     """
-    if explicit_type in ("notes", "bulletin"):
+    if explicit_type in ("notes", "bulletin", "timetable"):
         return explicit_type  # type: ignore[return-value]
     lowered = message.lower()
+    if any(word in lowered for word in ["emploi du temps", "horaire", "horaires", "planning", "timetable", "schedule"]):
+        return "timetable"
     if any(word in lowered for word in ["bulletin", "absence", "absences"]):
         return "bulletin"
     return "notes"
@@ -55,13 +57,15 @@ def build_pdf_answer(
     student: dict[str, Any],
     notes: list[Any],
     absences: list[Any],
+    modules: list[Any] | None = None,
+    events: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the successful PDF agent response dict.
 
     Parameters
     ----------
     selected_type:
-        ``"notes"`` or ``"bulletin"``.
+        ``"notes"``, ``"bulletin"`` or ``"timetable"``.
     file_path:
         Absolute or relative path to the generated PDF file.
     student:
@@ -79,7 +83,13 @@ def build_pdf_answer(
         "ok": True,
         "answer": f"Le PDF {selected_type} est pret: {file_path}",
         "artifact": {"type": selected_type, "file_path": file_path},
-        "data": {"student": student, "notes": notes, "absences": absences},
+        "data": {
+            "student": student,
+            "notes": notes,
+            "absences": absences,
+            "modules": modules or [],
+            "events": events or [],
+        },
         "error": None,
     }
 

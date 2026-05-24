@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Course, Module } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { FileText, Upload, Filter, ExternalLink, Download, Search, X } from "lucide-react";
+import { BookOpen, FileText, Upload, ExternalLink, Search, X } from "lucide-react";
 
 export default function CoursesPage() {
   const { user } = useAuth();
@@ -22,18 +22,18 @@ export default function CoursesPage() {
   const [uploadModule, setUploadModule] = useState("");
   const [uploading, setUploading] = useState(false);
 
-  const fetchCourses = async () => {
+  const fetchCourses = useCallback(async () => {
     try {
       setLoading(true);
       let query = `?limit=50`;
       if (search) query += `&search=${encodeURIComponent(search)}`;
       if (selectedModule) query += `&module_id=${selectedModule}`;
       
-      const data = await fetchApi(`/courses${query}`);
+      const data = await fetchApi<Course[]>(`/courses${query}`);
       setCourses(data);
       
       if (user?.role === "teacher" || user?.role === "admin") {
-        const mods = await fetchApi("/courses/modules");
+        const mods = await fetchApi<Module[]>("/courses/modules");
         setModules(mods);
       }
     } catch (e) {
@@ -41,15 +41,20 @@ export default function CoursesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [search, selectedModule, user]);
 
   useEffect(() => {
-    fetchCourses();
-  }, [search, selectedModule, user]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchCourses();
+  }, [fetchCourses]);
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) return;
+    if (!uploadModule) {
+      alert("Please select a module before uploading course material.");
+      return;
+    }
     setUploading(true);
     
     try {
@@ -57,7 +62,7 @@ export default function CoursesPage() {
       formData.append("file", file);
       if (uploadTitle) formData.append("title", uploadTitle);
       if (uploadDesc) formData.append("description", uploadDesc);
-      if (uploadModule) formData.append("module_id", uploadModule);
+      formData.append("module_id", uploadModule);
 
       await fetchApi("/courses/upload", {
         method: "POST",
@@ -77,8 +82,19 @@ export default function CoursesPage() {
     }
   };
 
-  const getFileIcon = (type: string) => {
+  const getFileIcon = () => {
     return <FileText size={24} className="text-primary" />;
+  };
+
+  const getIndexStatus = (status?: string) => {
+    switch (status) {
+      case "indexed":
+        return { label: "Ready for chat", className: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+      case "failed":
+        return { label: "Index failed", className: "bg-danger/10 text-danger border-danger/20" };
+      default:
+        return { label: "Indexing", className: "bg-amber-50 text-amber-700 border-amber-200" };
+    }
   };
 
   return (
@@ -142,9 +158,19 @@ export default function CoursesPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {courses.map(course => (
             <div key={course.id} className="bg-white rounded-xl border border-border overflow-hidden hover:border-primary/40 hover:shadow-md transition-all group flex flex-col">
+              {(() => {
+                const status = getIndexStatus(course.index_status);
+                return (
+                  <div className="px-5 pt-4 flex justify-end">
+                    <span className={`px-2.5 py-1 rounded-md border text-xs font-semibold ${status.className}`}>
+                      {status.label}
+                    </span>
+                  </div>
+                );
+              })()}
               <div className="p-5 flex-1 relative">
                 <div className="w-12 h-12 bg-primary-light rounded-xl flex items-center justify-center mb-4 text-primary shadow-inner">
-                  {getFileIcon(course.file_type)}
+                  {getFileIcon()}
                 </div>
                 
                 <h3 className="font-bold text-text text-lg leading-tight mb-1 line-clamp-2" title={course.title}>
@@ -221,13 +247,13 @@ export default function CoursesPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-text-muted mb-1">Module (Optional)</label>
+                <label className="block text-sm font-semibold text-text-muted mb-1">Module</label>
                 <select 
                   className="input-field bg-white"
                   value={uploadModule}
                   onChange={(e) => setUploadModule(e.target.value)}
                 >
-                  <option value="">Select a module (or auto-create)</option>
+                  <option value="">Select a module</option>
                   {modules.map(m => (
                     <option key={m.id} value={m.id}>{m.code} - {m.name}</option>
                   ))}
@@ -268,5 +294,3 @@ export default function CoursesPage() {
   );
 }
 
-// Temporary icon import fix since BookOpen was missing
-import { BookOpen } from "lucide-react";

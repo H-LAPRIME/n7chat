@@ -172,6 +172,7 @@ def list_courses(
           c.description,
           c.file_url,
           c.file_type,
+          c.index_status,
           c.created_at,
           m.name AS module_name,
           m.code AS module_code,
@@ -183,6 +184,11 @@ def list_courses(
         LEFT JOIN filieres f ON f.id = m.filiere_id
         LEFT JOIN enseignants e ON e.id = c.uploaded_by
         WHERE (%(module_id)s::uuid IS NULL OR c.module_id = %(module_id)s::uuid)
+          AND (
+            %(role)s = 'admin'
+            OR (%(role)s = 'teacher' AND m.teacher_id = %(teacher_id)s::uuid)
+            OR (%(role)s = 'student' AND m.filiere_id = %(filiere_id)s::uuid)
+          )
           AND (%(file_type)s::text IS NULL OR c.file_type::text = %(file_type)s::text)
           AND (
             %(search)s::text IS NULL
@@ -195,6 +201,9 @@ def list_courses(
         """,
         {
             "module_id": module_id,
+            "role": (user.get("role") or "").lower(),
+            "teacher_id": user.get("teacher_id"),
+            "filiere_id": user.get("filiere_id"),
             "file_type": file_type,
             "search": search,
             "search_pattern": f"%{search}%" if search else None,
@@ -243,11 +252,14 @@ def list_course_filieres(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher or admin role required")
     rows = fetch_all(
         """
-        SELECT f.id, f.name, f.code, d.name AS department_name
+        SELECT DISTINCT f.id, f.name, f.code, d.name AS department_name
         FROM filieres f
         LEFT JOIN departments d ON d.id = f.department_id
+        LEFT JOIN modules m ON m.filiere_id = f.id
+        WHERE (%(is_admin)s = TRUE OR m.teacher_id = %(teacher_id)s)
         ORDER BY f.name
-        """
+        """,
+        {"is_admin": role == "admin", "teacher_id": user.get("teacher_id")},
     )
     return [dict(row) for row in rows]
 
@@ -290,6 +302,7 @@ async def create_course(
     if not row:
         raise HTTPException(status_code=500, detail="Failed to create course")
 
+    execute("UPDATE courses SET index_status = 'pending' WHERE id = %(id)s", {"id": row["id"]})
     background_tasks.add_task(trigger_index_course, str(row["id"]))
     return dict(row)
 
@@ -323,6 +336,7 @@ async def update_course(
     )
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
+    execute("UPDATE courses SET index_status = 'pending' WHERE id = %(id)s", {"id": course_id})
     background_tasks.add_task(trigger_index_course, course_id)
     return dict(row)
 
@@ -362,8 +376,8 @@ async def upload_course_file(
     _assert_teacher_can_use_module(module_id, user)
     row = fetch_one(
         """
-        INSERT INTO courses (module_id, title, description, file_url, file_type, uploaded_by)
-        VALUES (%(module_id)s, %(title)s, %(description)s, %(file_url)s, %(file_type)s, %(uploaded_by)s)
+        INSERT INTO courses (module_id, title, description, file_url, file_type, uploaded_by, index_status)
+        VALUES (%(module_id)s, %(title)s, %(description)s, %(file_url)s, %(file_type)s, %(uploaded_by)s, 'pending')
         RETURNING *
         """,
         {

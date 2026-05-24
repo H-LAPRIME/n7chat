@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 from dotenv import load_dotenv
+from backend.tasks.llm_retry import call_with_retry
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -588,13 +589,15 @@ def classify_intent_task(
     )
 
     try:
-        response = _mistral_client().chat.complete(
-            model=DEFAULT_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0,
+        response = call_with_retry(
+            lambda: _mistral_client().chat.complete(
+                model=DEFAULT_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0,
+            )
         )
         return _parse_decision(_extract_content(response), message, history)
     except Exception as exc:

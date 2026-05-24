@@ -21,8 +21,14 @@ from backend.tasks.pdf_llm_task import (
     build_pdf_error,
     infer_report_type_task,
 )
-from backend.tools.pdf_tool import build_bulletin_pdf, build_notes_pdf
-from backend.tools.sql_tool import get_student_absences, get_student_notes, get_student_profile
+from backend.tools.pdf_tool import build_bulletin_pdf, build_notes_pdf, build_timetable_pdf
+from backend.tools.sql_tool import (
+    get_filiere_modules,
+    get_student_absences,
+    get_student_notes,
+    get_student_profile,
+    get_upcoming_events,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +63,7 @@ def build_pdf_report_sync(
     student = user.get("student") or {}
     student_id = user.get("student_id") or student.get("id")
     user_id = user.get("sub") or user.get("id")
+    filiere_id = user.get("filiere_id") or student.get("filiere_id")
 
     # Report type — delegated to task layer
     selected_type = infer_report_type_task(message, report_type)
@@ -93,15 +100,41 @@ def build_pdf_report_sync(
 
         notes = notes_result.get("data") or []
         absences = absences_result.get("data") or []
+        modules: list[dict[str, Any]] = []
+        events: list[dict[str, Any]] = []
 
         # --- PDF generation ---
-        if selected_type == "bulletin":
+        if selected_type == "timetable":
+            modules_result = sql_context.get("modules")
+            if not isinstance(modules_result, dict):
+                modules_result = (
+                    _tool_result(
+                        get_filiere_modules,
+                        {"filiere_id": filiere_id, "semester": user.get("semester")},
+                    )
+                    if filiere_id
+                    else {"data": []}
+                )
+            events_result = sql_context.get("events")
+            if not isinstance(events_result, dict):
+                events_result = _tool_result(
+                    get_upcoming_events,
+                    {
+                        "limit": 20,
+                        "filiere_id": filiere_id,
+                        "is_staff": (user.get("role") or "").lower() in {"teacher", "admin"},
+                    },
+                )
+            modules = modules_result.get("data") or []
+            events = events_result.get("data") or []
+            file_path = build_timetable_pdf(student, modules, events)
+        elif selected_type == "bulletin":
             file_path = build_bulletin_pdf(student, notes, absences)
         else:
             file_path = build_notes_pdf(student, notes)
 
         # --- response assembly (task layer) ---
-        return build_pdf_answer(selected_type, file_path, student, notes, absences)
+        return build_pdf_answer(selected_type, file_path, student, notes, absences, modules, events)
 
     except Exception as exc:
         return build_pdf_error(exc)

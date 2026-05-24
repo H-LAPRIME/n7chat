@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Event } from "@/lib/types";
+import { ChangeEvent, useCallback, useEffect, useState } from "react";
+import { Event, Filiere, Module } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Calendar as CalendarIcon, MapPin, Plus, Clock, X, Bell } from "lucide-react";
-import { useRouter } from "next/navigation";
 
 export default function EventsPage() {
   const { user } = useAuth();
-  const router = useRouter();
+  const canManage = user?.role === "teacher" || user?.role === "admin";
   const [events, setEvents] = useState<Event[]>([]);
+  const [filieres, setFilieres] = useState<Filiere[]>([]);
+  const [modules, setModules] = useState<Module[]>([]);
   const [loading, setLoading] = useState(true);
   
   // Modal state
@@ -24,28 +25,45 @@ export default function EventsPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [location, setLocation] = useState("");
+  const [visibilityScope, setVisibilityScope] = useState<"public" | "filiere" | "module">("public");
+  const [selectedFiliere, setSelectedFiliere] = useState("");
+  const [selectedModule, setSelectedModule] = useState("");
   const [notify, setNotify] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (user && user.role !== "teacher" && user.role !== "admin") {
-      router.push("/dashboard/chat");
-      return;
-    }
-    fetchEvents();
-  }, [user, router]);
-
-  const fetchEvents = async () => {
+  const fetchEvents = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await fetchApi("/events?upcoming_only=false");
+      const data = await fetchApi<Event[]>("/events?upcoming_only=false");
       setEvents(data);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchEvents();
+  }, [fetchEvents]);
+
+  useEffect(() => {
+    if (!canManage) return;
+    async function loadAudienceOptions() {
+      try {
+        const [filiereData, moduleData] = await Promise.all([
+          fetchApi<Filiere[]>("/courses/filieres"),
+          fetchApi<Module[]>("/courses/modules"),
+        ]);
+        setFilieres(filiereData);
+        setModules(moduleData);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+    void loadAudienceOptions();
+  }, [canManage]);
 
   const openModal = (ev?: Event) => {
     if (ev) {
@@ -56,6 +74,9 @@ export default function EventsPage() {
       setStartDate(new Date(ev.start_date).toISOString().slice(0, 16));
       setEndDate(ev.end_date ? new Date(ev.end_date).toISOString().slice(0, 16) : "");
       setLocation(ev.location || "");
+      setVisibilityScope(ev.visibility_scope || "public");
+      setSelectedFiliere(ev.filiere_id || "");
+      setSelectedModule(ev.module_id || "");
       setNotify(false);
     } else {
       setEditingId(null);
@@ -65,6 +86,9 @@ export default function EventsPage() {
       setStartDate("");
       setEndDate("");
       setLocation("");
+      setVisibilityScope("public");
+      setSelectedFiliere("");
+      setSelectedModule("");
       setNotify(true);
     }
     setShowModal(true);
@@ -82,6 +106,9 @@ export default function EventsPage() {
         start_date: new Date(startDate).toISOString(),
         end_date: endDate ? new Date(endDate).toISOString() : undefined,
         location: location || null,
+        visibility_scope: visibilityScope,
+        filiere_id: visibilityScope === "filiere" ? selectedFiliere : null,
+        module_id: visibilityScope === "module" ? selectedModule : null,
         notify_students: notify,
       };
 
@@ -98,8 +125,8 @@ export default function EventsPage() {
       }
       
       setShowModal(false);
-      fetchEvents();
-    } catch (e) {
+      void fetchEvents();
+    } catch {
       alert("Failed to save event");
     } finally {
       setSubmitting(false);
@@ -110,8 +137,8 @@ export default function EventsPage() {
     if (!confirm("Are you sure you want to delete this event?")) return;
     try {
       await fetchApi(`/events/${id}`, { method: "DELETE" });
-      fetchEvents();
-    } catch (e) {
+      void fetchEvents();
+    } catch {
       alert("Failed to delete event");
     }
   };
@@ -130,15 +157,17 @@ export default function EventsPage() {
     <div className="p-6 max-w-6xl mx-auto">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-text">Events Management</h1>
-          <p className="text-text-muted mt-1">Schedule and manage upcoming academic events.</p>
+          <h1 className="text-3xl font-bold text-text">{canManage ? "Events Management" : "University Events"}</h1>
+          <p className="text-text-muted mt-1">{canManage ? "Schedule and manage upcoming academic events." : "View upcoming academic events."}</p>
         </div>
-        <button 
-          onClick={() => openModal()}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus size={18} /> New Event
-        </button>
+        {canManage && (
+          <button 
+            onClick={() => openModal()}
+            className="btn-primary flex items-center gap-2"
+          >
+            <Plus size={18} /> New Event
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -161,10 +190,15 @@ export default function EventsPage() {
                 <span className={`px-2.5 py-1 text-xs font-bold uppercase rounded border ${getTypeColor(ev.event_type)}`}>
                   {ev.event_type}
                 </span>
-                <div className="flex gap-2">
-                  <button onClick={() => openModal(ev)} className="text-sm font-medium text-accent hover:underline">Edit</button>
-                  <button onClick={() => handleDelete(ev.id)} className="text-sm font-medium text-danger hover:underline">Delete</button>
-                </div>
+                <span className="px-2.5 py-1 text-xs font-semibold rounded border bg-slate-50 text-slate-600 border-slate-200">
+                  {ev.visibility_scope || "public"}
+                </span>
+                {canManage && (
+                  <div className="flex gap-2">
+                    <button onClick={() => openModal(ev)} className="text-sm font-medium text-accent hover:underline">Edit</button>
+                    <button onClick={() => handleDelete(ev.id)} className="text-sm font-medium text-danger hover:underline">Delete</button>
+                  </div>
+                )}
               </div>
               
               <h3 className="text-xl font-bold text-text mb-2">{ev.title}</h3>
@@ -209,7 +243,7 @@ export default function EventsPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-text-muted mb-1">Type</label>
-                  <select className="input-field bg-white" value={eventType} onChange={(e: any) => setEventType(e.target.value)}>
+                  <select className="input-field bg-white" value={eventType} onChange={(e: ChangeEvent<HTMLSelectElement>) => setEventType(e.target.value as typeof eventType)}>
                     <option value="exam">Exam</option>
                     <option value="conference">Conference</option>
                     <option value="meeting">Meeting</option>
@@ -236,6 +270,39 @@ export default function EventsPage() {
               <div>
                 <label className="block text-sm font-semibold text-text-muted mb-1">Description (Optional)</label>
                 <textarea className="input-field resize-none h-24" value={description} onChange={e => setDescription(e.target.value)} />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-text-muted mb-1">Audience</label>
+                  <select className="input-field bg-white" value={visibilityScope} onChange={(e) => setVisibilityScope(e.target.value as typeof visibilityScope)}>
+                    <option value="public">Public</option>
+                    <option value="filiere">Specific filiere</option>
+                    <option value="module">Specific module</option>
+                  </select>
+                </div>
+                {visibilityScope === "filiere" && (
+                  <div>
+                    <label className="block text-sm font-semibold text-text-muted mb-1">Filiere</label>
+                    <select required className="input-field bg-white" value={selectedFiliere} onChange={(e) => setSelectedFiliere(e.target.value)}>
+                      <option value="">Select filiere</option>
+                      {filieres.map((filiere) => (
+                        <option key={filiere.id} value={filiere.id}>{filiere.code} - {filiere.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {visibilityScope === "module" && (
+                  <div>
+                    <label className="block text-sm font-semibold text-text-muted mb-1">Module</label>
+                    <select required className="input-field bg-white" value={selectedModule} onChange={(e) => setSelectedModule(e.target.value)}>
+                      <option value="">Select module</option>
+                      {modules.map((module) => (
+                        <option key={module.id} value={module.id}>{module.code} - {module.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
               
               {!editingId && (

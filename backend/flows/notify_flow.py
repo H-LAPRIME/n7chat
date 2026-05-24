@@ -38,7 +38,7 @@ def notify_users(
 def notify_event_created(event_id: str) -> int:
     event = fetch_one(
         """
-        SELECT title, event_type, start_date, location
+        SELECT title, event_type, start_date, location, visibility_scope, filiere_id, module_id
         FROM events
         WHERE id = %(id)s
         """,
@@ -51,8 +51,21 @@ def notify_event_created(event_id: str) -> int:
         """
         SELECT u.id
         FROM users u
+        LEFT JOIN students s ON s.user_id = u.id
         WHERE u.role = 'student' AND u.is_active = TRUE
+          AND (
+            %(visibility_scope)s = 'public'
+            OR s.filiere_id = %(filiere_id)s::uuid
+            OR s.filiere_id = (
+              SELECT filiere_id FROM modules WHERE id = %(module_id)s::uuid
+            )
+          )
         """,
+        {
+            "visibility_scope": event.get("visibility_scope") or "public",
+            "filiere_id": event.get("filiere_id"),
+            "module_id": event.get("module_id"),
+        },
     )
     message = f"{event['title']} - {event['start_date']}"
     if event.get("location"):

@@ -14,9 +14,9 @@ function onRefreshed(token: string) {
   refreshSubscribers = [];
 }
 
-export async function fetchApi(endpoint: string, options: RequestInit = {}): Promise<any> {
+export async function fetchApi<T = unknown>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
-  let token = getAccessToken();
+  const token = getAccessToken();
 
   const headers = new Headers(options.headers || {});
   if (token && !headers.has("Authorization")) {
@@ -63,7 +63,7 @@ export async function fetchApi(endpoint: string, options: RequestInit = {}): Pro
         // Retry the original request
         headers.set("Authorization", `Bearer ${data.access_token}`);
         response = await fetch(url, { ...options, headers });
-      } catch (err) {
+      } catch {
         isRefreshing = false;
         clearTokens();
         throw new Error("Unauthorized");
@@ -75,39 +75,43 @@ export async function fetchApi(endpoint: string, options: RequestInit = {}): Pro
           headers.set("Authorization", `Bearer ${newToken}`);
           try {
             const res = await fetch(url, { ...options, headers });
-            resolve(handleResponse(res));
-          } catch (err) {
-            reject(err);
+            resolve(handleResponse<T>(res));
+          } catch (error) {
+            reject(error);
           }
         });
       });
     }
   }
 
-  return handleResponse(response);
+  return handleResponse<T>(response);
 }
 
-async function handleResponse(response: Response) {
+async function handleResponse<T = unknown>(response: Response): Promise<T> {
   if (response.status === 204) {
-    return null;
+    return null as T;
   }
   
   const text = await response.text();
-  let data;
+  let data: unknown;
   try {
     data = JSON.parse(text);
-  } catch (e) {
+  } catch {
     data = text;
   }
 
   if (!response.ok) {
-    const error = new Error(data?.detail || response.statusText);
-    (error as any).status = response.status;
-    (error as any).data = data;
+    const detail =
+      typeof data === "object" && data !== null && "detail" in data
+        ? String((data as { detail: unknown }).detail)
+        : response.statusText;
+    const error = new Error(detail) as Error & { status?: number; data?: unknown };
+    error.status = response.status;
+    error.data = data;
     throw error;
   }
 
-  return data;
+  return data as T;
 }
 
 export function getApiUrl() {

@@ -1,8 +1,8 @@
 "use client";
 
-import { useAuth } from "@/context/AuthContext";
 import { useConversations } from "@/context/ConversationContext";
-import { MessageSquare, BookOpen, Calendar, User, Plus, MessageCircle, MoreVertical, Trash2, Edit2 } from "lucide-react";
+import { MessageSquare, BookOpen, Calendar, User, Plus, MessageCircle, MoreVertical, Trash2, FileUp } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 import NextLink from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -18,12 +18,13 @@ export default function Sidebar() {
   const mainLinks = [
     { href: "/dashboard/chat", label: "Chat", icon: MessageSquare },
     { href: "/dashboard/courses", label: "Courses", icon: BookOpen },
-    ...((user?.role === "teacher" || user?.role === "admin") ? [{ href: "/dashboard/events", label: "Events", icon: Calendar }] : []),
+    { href: "/dashboard/events", label: "Events", icon: Calendar },
+    ...((user?.role === "admin") ? [{ href: "/dashboard/documents", label: "Documents", icon: FileUp }] : []),
     { href: "/dashboard/profile", label: "Profile", icon: User },
   ];
 
   const handleNewChat = async () => {
-    const newConv = await createConversation("New Conversation");
+    await createConversation("New Conversation");
     router.push("/dashboard/chat");
   };
 

@@ -74,7 +74,14 @@ def collect_sql_context(intent: str, user: dict[str, Any]) -> dict[str, Any]:
             )
         else:
             data["modules"] = {"ok": False, "error": "filiere_id is required", "data": []}
-        data["events"] = _tool_result(get_upcoming_events, {"limit": 20})
+        data["events"] = _tool_result(
+            get_upcoming_events,
+            {
+                "limit": 20,
+                "filiere_id": filiere_id,
+                "is_staff": (user.get("role") or "").lower() in {"teacher", "admin"},
+            },
+        )
     elif intent == "profile":
         if filiere_id:
             data["modules"] = _tool_result(
@@ -116,6 +123,57 @@ def _rows(result: dict[str, Any] | None) -> list[dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
+def _record(result: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        return {}
+    data = result.get("data") or {}
+    return data if isinstance(data, dict) else {}
+
+
+def _table(headers: list[str], rows: list[list[Any]], empty_message: str = "_Aucune donnee trouvee._") -> str:
+    if not rows:
+        return empty_message
+    header = "| " + " | ".join(headers) + " |"
+    sep = "| " + " | ".join(["---"] * len(headers)) + " |"
+    body = [
+        "| " + " | ".join(str(value or "").replace("|", "\\|").replace("\n", " ") for value in row) + " |"
+        for row in rows
+    ]
+    return "\n".join([header, sep, *body])
+
+
+def _format_profile_block(profile: dict[str, Any]) -> str:
+    full_name = " ".join(
+        part for part in [profile.get("first_name"), profile.get("last_name")] if part
+    ).strip()
+    rows = [
+        ["Nom complet", full_name or "-"],
+        ["Code etudiant", profile.get("student_code") or "-"],
+        ["Filiere", f"{profile.get('filiere_name') or '-'} ({profile.get('filiere_code') or '-'})"],
+        ["Niveau", profile.get("level_name") or "-"],
+        ["Annee d'inscription", profile.get("enrollment_year") or "-"],
+        ["Statut", profile.get("status") or "-"],
+    ]
+    return _table(["Information", "Valeur"], rows)
+
+
+def _format_modules_block(modules: list[dict[str, Any]]) -> str:
+    rows = []
+    for module in modules:
+        teacher = " ".join(
+            part for part in [module.get("teacher_first_name"), module.get("teacher_last_name")] if part
+        ).strip()
+        rows.append(
+            [
+                module.get("module_name") or "-",
+                module.get("module_code") or "-",
+                module.get("semester") or "-",
+                teacher or "-",
+            ]
+        )
+    return _table(["Module", "Code", "Semestre", "Enseignant"], rows, "_Aucun module trouve._")
+
+
 def format_sql_context(intent: str, data: dict[str, Any]) -> str:
     """Format collected SQL context as Markdown before it reaches the LLM."""
     if intent == "notes":
@@ -133,17 +191,18 @@ def format_sql_context(intent: str, data: dict[str, Any]) -> str:
         )
 
     if intent == "emploi_du_temps":
-        modules = to_markdown_table(
-            _rows(data.get("modules")),
-            ["module_name", "module_code", "semester", "teacher_first_name", "teacher_last_name"],
-            empty_message="_Aucun module trouve._",
-        )
+        modules = _format_modules_block(_rows(data.get("modules")))
         events = to_markdown_table(
             _rows(data.get("events")),
             ["title", "event_type", "start_date", "end_date", "location"],
             empty_message="_Aucun evenement a venir._",
         )
         return truncate_for_chat(f"### Modules\n{modules}\n\n### Evenements\n{events}")
+
+    if intent == "profile":
+        profile = _format_profile_block(_record(data.get("profile")))
+        modules = _format_modules_block(_rows(data.get("modules")))
+        return truncate_for_chat(f"### Profil etudiant\n{profile}\n\n### Modules\n{modules}")
 
     if intent == "pdf_report":
         notes = to_markdown_table(
@@ -169,10 +228,7 @@ def format_sql_context(intent: str, data: dict[str, Any]) -> str:
 
     modules = _rows(data.get("modules"))
     if modules:
-        return to_markdown_table(
-            modules,
-            ["module_name", "module_code", "semester", "teacher_first_name", "teacher_last_name"],
-        )
+        return _format_modules_block(modules)
 
     return "_Aucune donnee structuree a formater._"
 

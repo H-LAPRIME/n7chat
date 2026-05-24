@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid5, NAMESPACE_URL
 
-from backend.db.supabase import get_supabase_client
+from backend.db.supabase import execute, get_supabase_client
 from backend.db.vector import delete_document_chunks, upsert_document_chunk
 from backend.tools.rag_tool import embed_text
 
@@ -51,6 +51,8 @@ async def index_document(
     source_table: str | None = None,
     source_url: str | None = None,
     module_id: str | None = None,
+    filiere_id: str | None = None,
+    visibility_scope: str = "public",
     user_id: str | None = None,
     module_name: str | None = None,
     filiere: str | None = None,
@@ -72,6 +74,8 @@ async def index_document(
             source_table=source_table,
             source_url=source_url,
             module_id=module_id,
+            filiere_id=filiere_id,
+            visibility_scope=visibility_scope,
             user_id=user_id,
             chunk_index=index,
             content=chunk,
@@ -92,7 +96,7 @@ async def trigger_index_course(course_id: str) -> int:
     supabase = get_supabase_client()
     course = (
         supabase.table("courses")
-        .select("*, modules(name, filieres(name))")
+        .select("*, modules(name, filiere_id, filieres(name))")
         .eq("id", course_id)
         .single()
         .execute()
@@ -104,19 +108,27 @@ async def trigger_index_course(course_id: str) -> int:
     module = course.get("modules") or {}
     filiere = module.get("filieres") or {}
     content = f"{course.get('title', '')}. {course.get('description', '')}".strip()
-    return await index_document(
-        source_type="course",
-        source_id=course_id,
-        source_table="courses",
-        source_url=course.get("file_url"),
-        module_id=course.get("module_id"),
-        content=content,
-        title=course.get("title"),
-        module_name=module.get("name"),
-        filiere=filiere.get("name"),
-        file_type=course.get("file_type"),
-        metadata={"uploaded_by": course.get("uploaded_by")},
-    )
+    try:
+        count = await index_document(
+            source_type="course",
+            source_id=course_id,
+            source_table="courses",
+            source_url=course.get("file_url"),
+            module_id=course.get("module_id"),
+            filiere_id=module.get("filiere_id"),
+            visibility_scope="filiere" if module.get("filiere_id") else "public",
+            content=content,
+            title=course.get("title"),
+            module_name=module.get("name"),
+            filiere=filiere.get("name"),
+            file_type=course.get("file_type"),
+            metadata={"uploaded_by": course.get("uploaded_by")},
+        )
+        execute("UPDATE courses SET index_status = 'indexed' WHERE id = %(id)s", {"id": course_id})
+        return count
+    except Exception:
+        execute("UPDATE courses SET index_status = 'failed' WHERE id = %(id)s", {"id": course_id})
+        raise
 
 
 async def index_course_content(course_id: str, content: str) -> int:
@@ -124,7 +136,7 @@ async def index_course_content(course_id: str, content: str) -> int:
     supabase = get_supabase_client()
     course = (
         supabase.table("courses")
-        .select("*, modules(name, filieres(name))")
+        .select("*, modules(name, filiere_id, filieres(name))")
         .eq("id", course_id)
         .single()
         .execute()
@@ -137,22 +149,30 @@ async def index_course_content(course_id: str, content: str) -> int:
     filiere = module.get("filieres") or {}
     fallback = f"{course.get('title', '')}. {course.get('description', '')}".strip()
     searchable = "\n\n".join(part for part in [fallback, content.strip()] if part)
-    return await index_document(
-        source_type="course",
-        source_id=course_id,
-        source_table="courses",
-        source_url=course.get("file_url"),
-        module_id=course.get("module_id"),
-        content=searchable,
-        title=course.get("title"),
-        module_name=module.get("name"),
-        filiere=filiere.get("name"),
-        file_type=course.get("file_type"),
-        metadata={
-            "uploaded_by": course.get("uploaded_by"),
-            "indexed_content": "uploaded_file",
-        },
-    )
+    try:
+        count = await index_document(
+            source_type="course",
+            source_id=course_id,
+            source_table="courses",
+            source_url=course.get("file_url"),
+            module_id=course.get("module_id"),
+            filiere_id=module.get("filiere_id"),
+            visibility_scope="filiere" if module.get("filiere_id") else "public",
+            content=searchable,
+            title=course.get("title"),
+            module_name=module.get("name"),
+            filiere=filiere.get("name"),
+            file_type=course.get("file_type"),
+            metadata={
+                "uploaded_by": course.get("uploaded_by"),
+                "indexed_content": "uploaded_file",
+            },
+        )
+        execute("UPDATE courses SET index_status = 'indexed' WHERE id = %(id)s", {"id": course_id})
+        return count
+    except Exception:
+        execute("UPDATE courses SET index_status = 'failed' WHERE id = %(id)s", {"id": course_id})
+        raise
 
 
 async def index_admin_document_upload(
@@ -165,6 +185,9 @@ async def index_admin_document_upload(
     uploaded_by: str | None = None,
     description: str | None = None,
     document_category: str | None = None,
+    visibility_scope: str = "public",
+    filiere_id: str | None = None,
+    module_id: str | None = None,
 ) -> int:
     """Index an uploaded administrative document stored in the documents bucket."""
     searchable = "\n\n".join(part for part in [title, description or "", content.strip()] if part)
@@ -175,6 +198,9 @@ async def index_admin_document_upload(
         source_id=source_id,
         source_table="storage.documents",
         source_url=public_url,
+        module_id=module_id,
+        filiere_id=filiere_id,
+        visibility_scope=visibility_scope,
         content=searchable,
         title=title,
         file_type=file_type,
@@ -183,6 +209,9 @@ async def index_admin_document_upload(
             "uploaded_by": uploaded_by,
             "description": description,
             "document_category": document_category or "admin_document",
+            "visibility_scope": visibility_scope,
+            "filiere_id": filiere_id,
+            "module_id": module_id,
             "indexed_content": "uploaded_file",
         },
     )

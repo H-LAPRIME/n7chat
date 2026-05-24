@@ -41,7 +41,11 @@ def test_collect_sql_context_for_timetable(monkeypatch):
     )
 
     assert data["modules"]["payload"] == {"filiere_id": "filiere-1", "semester": 3}
-    assert data["events"]["payload"] == {"limit": 20}
+    assert data["events"]["payload"] == {
+        "limit": 20,
+        "filiere_id": "filiere-1",
+        "is_staff": False,
+    }
 
 
 def test_collect_sql_context_reports_missing_student_id():
@@ -87,6 +91,43 @@ def test_format_sql_context_for_notes_uses_markdown_table():
 
     assert "| module_name | exam_type | score | coefficient | published_at |" in formatted
     assert "| Algorithmique | cc | 13 | 0.4 | 2026-05-17 |" in formatted
+
+
+def test_format_sql_context_for_profile_uses_user_friendly_tables():
+    formatted = sql_agent.format_sql_context(
+        "profile",
+        {
+            "profile": {
+                "data": {
+                    "first_name": "Omar",
+                    "last_name": "El Fassi",
+                    "student_code": "STU-002",
+                    "filiere_name": "Genie Informatique",
+                    "filiere_code": "GI",
+                    "level_name": "Licence 2",
+                    "enrollment_year": 2024,
+                    "status": "active",
+                }
+            },
+            "modules": {
+                "data": [
+                    {
+                        "module_name": "Algorithmique avancee",
+                        "module_code": "GI-S3-ALG",
+                        "semester": 3,
+                        "teacher_first_name": "Youssef",
+                        "teacher_last_name": "El Idrissi",
+                    }
+                ]
+            },
+        },
+    )
+
+    assert "### Profil etudiant" in formatted
+    assert "| Information | Valeur |" in formatted
+    assert "| Nom complet | Omar El Fassi |" in formatted
+    assert "| Module | Code | Semestre | Enseignant |" in formatted
+    assert "| Algorithmique avancee | GI-S3-ALG | 3 | Youssef El Idrissi |" in formatted
 
 
 def test_answer_from_sql_sync_attaches_formatted_context(monkeypatch):

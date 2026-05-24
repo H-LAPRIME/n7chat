@@ -20,8 +20,9 @@ export default function LoginPage() {
     try {
       await login(email, password);
       router.push("/dashboard/chat");
-    } catch (err: any) {
-      setError(err.message || "Failed to login. Check your credentials.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to login. Check your credentials.";
+      setError(message);
       console.error(err);
     } finally {
       setIsSubmitting(false);

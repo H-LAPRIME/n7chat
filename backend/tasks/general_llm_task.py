@@ -12,6 +12,7 @@ from os import environ
 from typing import Any
 
 from backend.tasks.orchestrator_llm_task import _extract_content, _mistral_client, DEFAULT_MODEL
+from backend.tasks.llm_retry import call_with_retry
 
 SYSTEM_PROMPT = """
 Tu es l'assistant IA de la plateforme universitaire n7chat de l'ecole ENSET MOHAMMEDIA.
@@ -49,10 +50,12 @@ def answer_general_task(
     messages.append({"role": "user", "content": message})
 
     try:
-        response = _mistral_client().chat.complete(
-            model=DEFAULT_MODEL,
-            messages=messages,
-            temperature=0.3,
+        response = call_with_retry(
+            lambda: _mistral_client().chat.complete(
+                model=DEFAULT_MODEL,
+                messages=messages,
+                temperature=0.3,
+            )
         )
         answer = _extract_content(response)
         return {"answer": answer, "error": None}

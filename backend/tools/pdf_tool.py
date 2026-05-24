@@ -200,6 +200,68 @@ def build_bulletin_pdf(
     return filename
 
 
+def build_timetable_pdf(
+    student: dict[str, Any],
+    modules: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> str:
+    filename = _pdf_path("timetable")
+    doc = _base_doc(filename)
+    styles = getSampleStyleSheet()
+    story = []
+
+    name = _student_name(student) or "Etudiant"
+    story.append(Paragraph(f"Emploi du temps - {name}", styles["Title"]))
+    story.append(
+        Paragraph(
+            f"Filiere : {_student_filiere(student)} | Niveau : {_student_level(student)}",
+            styles["Normal"],
+        )
+    )
+    story.append(Spacer(1, 0.4 * cm))
+    story.append(HRFlowable(width="100%", color=TEAL, thickness=1))
+    story.append(Spacer(1, 0.4 * cm))
+
+    story.append(Paragraph("Modules", styles["Heading2"]))
+    module_rows = [["Module", "Code", "Semestre", "Enseignant"]]
+    module_rows.extend(
+        [
+            str(module.get("module_name") or module.get("name") or ""),
+            str(module.get("module_code") or module.get("code") or ""),
+            str(module.get("semester") or ""),
+            " ".join(
+                part
+                for part in [module.get("teacher_first_name"), module.get("teacher_last_name")]
+                if part
+            ),
+        ]
+        for module in modules
+    )
+    modules_table = Table(module_rows, colWidths=[6 * cm, 3 * cm, 2.5 * cm, 5 * cm])
+    modules_table.setStyle(_table_style())
+    story.append(modules_table)
+    story.append(Spacer(1, 0.5 * cm))
+
+    story.append(Paragraph("Evenements a venir", styles["Heading2"]))
+    event_rows = [["Titre", "Type", "Debut", "Fin", "Lieu"]]
+    event_rows.extend(
+        [
+            str(event.get("title") or ""),
+            str(event.get("event_type") or ""),
+            str(event.get("start_date") or "")[:16],
+            str(event.get("end_date") or "")[:16],
+            str(event.get("location") or ""),
+        ]
+        for event in events
+    )
+    events_table = Table(event_rows, colWidths=[5 * cm, 2.5 * cm, 3.5 * cm, 3.5 * cm, 3 * cm])
+    events_table.setStyle(_table_style())
+    story.append(events_table)
+
+    doc.build(story)
+    return filename
+
+
 @tool
 def build_notes_pdf_tool(
     student: dict[str, Any],

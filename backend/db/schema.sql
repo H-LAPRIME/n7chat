@@ -36,6 +36,8 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+ALTER TYPE message_type_enum ADD VALUE IF NOT EXISTS 'markdown';
+
 DO $$ BEGIN
   CREATE TYPE document_source_enum AS ENUM (
     'course',
@@ -136,6 +138,7 @@ CREATE TABLE IF NOT EXISTS courses (
   file_url TEXT,
   file_type file_type_enum,
   uploaded_by UUID REFERENCES enseignants(id) ON DELETE SET NULL,
+  index_status VARCHAR(20) DEFAULT 'pending',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -169,6 +172,9 @@ CREATE TABLE IF NOT EXISTS events (
   start_date TIMESTAMP NOT NULL,
   end_date TIMESTAMP,
   location VARCHAR(255),
+  visibility_scope VARCHAR(20) DEFAULT 'public',
+  filiere_id UUID REFERENCES filieres(id) ON DELETE SET NULL,
+  module_id UUID REFERENCES modules(id) ON DELETE SET NULL,
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -225,6 +231,8 @@ CREATE TABLE IF NOT EXISTS document_chunks (
   source_table TEXT,
   source_url TEXT,
   module_id UUID REFERENCES modules(id) ON DELETE SET NULL,
+  filiere_id UUID REFERENCES filieres(id) ON DELETE SET NULL,
+  visibility_scope VARCHAR(20) DEFAULT 'public',
   user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   chunk_index INT NOT NULL,
   content TEXT NOT NULL,
@@ -237,6 +245,21 @@ CREATE TABLE IF NOT EXISTS document_chunks (
   metadata JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE courses ADD COLUMN IF NOT EXISTS index_status VARCHAR(20) DEFAULT 'pending';
+ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS filiere_id UUID REFERENCES filieres(id) ON DELETE SET NULL;
+ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS visibility_scope VARCHAR(20) DEFAULT 'public';
+ALTER TABLE events ADD COLUMN IF NOT EXISTS visibility_scope VARCHAR(20) DEFAULT 'public';
+ALTER TABLE events ADD COLUMN IF NOT EXISTS filiere_id UUID REFERENCES filieres(id) ON DELETE SET NULL;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS module_id UUID REFERENCES modules(id) ON DELETE SET NULL;
+
+UPDATE document_chunks dc
+SET filiere_id = m.filiere_id,
+    visibility_scope = 'filiere'
+FROM modules m
+WHERE dc.source_type = 'course'
+  AND dc.module_id = m.id
+  AND m.filiere_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS course_chunks (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -258,6 +281,7 @@ INSERT INTO document_chunks (
   source_id,
   source_table,
   module_id,
+  filiere_id,
   chunk_index,
   content,
   embedding,
@@ -275,6 +299,7 @@ SELECT
   course_id,
   'courses',
   module_id,
+  NULL,
   chunk_index,
   content,
   embedding,
@@ -298,6 +323,8 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_document_chunks_source ON document_chunks(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_document_chunks_module ON document_chunks(module_id);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_filiere ON document_chunks(filiere_id);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_visibility ON document_chunks(visibility_scope);
 CREATE INDEX IF NOT EXISTS idx_document_chunks_user ON document_chunks(user_id);
 CREATE INDEX IF NOT EXISTS idx_document_chunks_metadata ON document_chunks USING gin (metadata);
 CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding ON document_chunks USING hnsw (embedding vector_cosine_ops);

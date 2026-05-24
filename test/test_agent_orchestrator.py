@@ -54,7 +54,7 @@ def test_parse_decision_falls_back_for_invalid_intent():
 def test_graph_routes_intents_to_expected_agent_nodes():
     assert route_from_intent({"intent": "notes"}) == "sql"
     assert route_from_intent({"intent": "absence"}) == "sql"
-    assert route_from_intent({"intent": "emploi_du_temps"}) == "sql"
+    assert route_from_intent({"intent": "emploi_du_temps"}) == "hybrid"
     assert (
         route_from_intent(
             {

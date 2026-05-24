@@ -12,7 +12,8 @@ export default function TopBar() {
     if (pathname.includes("/chat")) return "Chat Assistant";
     if (pathname.includes("/courses")) return "Courses Directory";
     if (pathname.includes("/events")) return "University Events";
-    if (pathname.includes("/profile")) return "Student Profile";
+    if (pathname.includes("/documents")) return "Admin Documents";
+    if (pathname.includes("/profile")) return "Account Profile";
     return "Dashboard";
   };
 

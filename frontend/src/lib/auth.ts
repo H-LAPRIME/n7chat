@@ -26,7 +26,17 @@ export function clearTokens() {
   }
 }
 
-export function decodeJwt(token: string): any {
+export type JwtPayload = {
+  sub?: string;
+  id?: string;
+  email?: string;
+  role?: "student" | "teacher" | "admin";
+  is_active?: boolean;
+  exp?: number;
+  iat?: number;
+};
+
+export function decodeJwt(token: string): JwtPayload | null {
   try {
     const base64Url = token.split(".")[1];
     const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
@@ -37,7 +47,7 @@ export function decodeJwt(token: string): any {
         .join("")
     );
     return JSON.parse(jsonPayload);
-  } catch (e) {
+  } catch {
     return null;
   }
 }

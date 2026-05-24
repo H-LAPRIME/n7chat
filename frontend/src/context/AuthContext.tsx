@@ -32,13 +32,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const decoded = decodeJwt(token);
         // We can optionally use decoded while fetching to show UI immediately
-        if (decoded) {
-           setUser(decoded);
+        if (decoded?.email && decoded.role) {
+          setUser({
+            id: decoded.sub || decoded.id || "",
+            sub: decoded.sub,
+            email: decoded.email,
+            role: decoded.role,
+            is_active: decoded.is_active ?? true,
+          });
         }
 
-        const me = await fetchApi("/auth/me");
+        const me = await fetchApi<User>("/auth/me");
         setUser(me);
-      } catch (err) {
+      } catch {
         clearTokens();
         setUser(null);
       } finally {
@@ -49,14 +55,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
-    const data: TokenResponse = await fetchApi("/auth/login", {
+    const data = await fetchApi<TokenResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
     saveTokens(data.access_token, data.refresh_token);
     
     // Fetch full profile
-    const me = await fetchApi("/auth/me");
+    const me = await fetchApi<User>("/auth/me");
     setUser(me);
   };
 
@@ -69,7 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({ refresh_token: refresh }),
         });
       }
-    } catch (e) {
+    } catch {
       // Ignore
     } finally {
       clearTokens();
