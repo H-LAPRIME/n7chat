@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -119,8 +120,48 @@ def _touch_conversation(conv_id: str) -> None:
         logger.warning("Could not touch conversation %s: %s", conv_id, exc)
 
 
+def _extract_course_context(content: str) -> dict[str, Any]:
+    urls = re.findall(r"https?://[^\s)]+", content)
+    markdown_links = re.findall(r"\[([^\]]+)\]\((https?://[^)]+)\)", content)
+    titles = re.findall(r"\*\*([^*]+)\*\*", content)
+    return {
+        "course_titles": titles[:5],
+        "links": [{"label": label, "url": url} for label, url in markdown_links[:5]],
+        "urls": [url.rstrip(".,;") for url in urls[:5]],
+    }
+
+
+def _update_conversation_context(
+    conv_id: str,
+    *,
+    user_message: str,
+    assistant_response: str,
+) -> None:
+    context = {
+        "last_user_message": user_message[:1000],
+        "last_assistant_response": assistant_response[:4000],
+        "last_course_context": _extract_course_context(assistant_response),
+    }
+    try:
+        execute(
+            """
+            UPDATE conversations
+            SET context_summary = %(context_summary)s,
+                updated_at = NOW()
+            WHERE id = %(id)s
+            """,
+            {"id": conv_id, "context_summary": json.dumps(context, ensure_ascii=False)},
+        )
+    except Exception as exc:
+        logger.warning("Could not update conversation context %s: %s", conv_id, exc)
+
+
 def _load_history(conversation_id: str, limit: int = 12) -> list[dict[str, Any]]:
     """Return the last *limit* messages formatted for the agent."""
+    conversation = fetch_one(
+        "SELECT context_summary FROM conversations WHERE id = %(conv_id)s",
+        {"conv_id": conversation_id},
+    )
     rows = fetch_all(
         """
         SELECT sender_type, content
@@ -137,20 +178,30 @@ def _load_history(conversation_id: str, limit: int = 12) -> list[dict[str, Any]]
     )
     # Normalise sender_type → role expected by the LLM history format
     role_map = {"user": "user", "assistant": "assistant", "system": "system"}
-    return [
+    history = [
         {
             "role": role_map.get(row["sender_type"], "user"),
             "content": row["content"] or "",
         }
         for row in rows
     ]
+    if conversation and conversation.get("context_summary"):
+        history.insert(
+            0,
+            {
+                "role": "system",
+                "content": f"Conversation-local context: {conversation['context_summary']}",
+            },
+        )
+    return history
 
 
 def _message_format(content: str) -> str:
     lines = [line.strip() for line in content.splitlines()]
     has_table = any(line.startswith("|") and line.endswith("|") for line in lines)
     has_heading = any(line.startswith("#") for line in lines)
-    return "markdown" if has_table or has_heading else "text"
+    has_link = bool(re.search(r"\[[^\]]+\]\(https?://[^)]+\)", content))
+    return "markdown" if has_table or has_heading or has_link else "text"
 
 
 def _pdf_cache_path(user_id: str, filename: str) -> Path:
@@ -250,10 +301,16 @@ async def chat_stream(
                     full_response,
                     message_type=message_type,
                 )
+                _update_conversation_context(
+                    body.conversation_id,
+                    user_message=body.message,
+                    assistant_response=full_response,
+                )
                 print("[CHAT] ✅ Réponse assistant sauvegardée.")
 
             # 5. Touch conversation timestamp
-            _touch_conversation(body.conversation_id)
+            if not full_response:
+                _touch_conversation(body.conversation_id)
 
             # 6. Signal end of stream
             print(f"[CHAT] 🏁 Stream terminé.\n{'='*60}\n")

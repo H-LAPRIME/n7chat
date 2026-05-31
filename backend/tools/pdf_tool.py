@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import re
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any
@@ -26,6 +27,74 @@ LIGHT = colors.HexColor("#F1EFE8")
 BORDER = colors.HexColor("#B4B2A9")
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates"
 PDF_TEMPLATE = "pdf_report.html"
+
+BLACKBOARD_BOLD = {
+    "N": "ℕ",
+    "Z": "ℤ",
+    "Q": "ℚ",
+    "R": "ℝ",
+    "C": "ℂ",
+    "K": "𝕂",
+}
+SUBSCRIPT_CHARS = str.maketrans("0123456789+-=()aehijklmnoprstuvx", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ")
+SUPERSCRIPT_CHARS = str.maketrans("0123456789+-=()in", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁱⁿ")
+
+
+def _translate_script(value: str, table: dict[int, str]) -> str:
+    return value.translate(table)
+
+
+def _format_matrix(match: re.Match[str]) -> str:
+    body = match.group(1)
+    rows = []
+    for row in re.split(r"\\\\", body):
+        cells = [cell.strip() for cell in row.split("&") if cell.strip()]
+        if cells:
+            rows.append("  ".join(cells))
+    return "[" + "; ".join(rows) + "]"
+
+
+def _latex_to_readable_text(value: Any) -> str:
+    """Convert common LaTeX math fragments into readable PDF text."""
+    if value is None:
+        return ""
+    text = _normalize_cell(value)
+    text = re.sub(r"\\begin\{[bpv]?matrix\}([\s\S]*?)\\end\{[bpv]?matrix\}", _format_matrix, text)
+    text = re.sub(r"\\mathbb\{([A-Z])\}", lambda m: BLACKBOARD_BOLD.get(m.group(1), m.group(1)), text)
+    text = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1)/(\2)", text)
+    text = re.sub(r"\\sqrt\{([^{}]+)\}", r"√(\1)", text)
+    replacements = {
+        r"\(": "",
+        r"\)": "",
+        r"\[": "",
+        r"\]": "",
+        "$$": "",
+        r"\times": "×",
+        r"\cdot": "·",
+        r"\dots": "…",
+        r"\ldots": "…",
+        r"\sum": "∑",
+        r"\lambda": "λ",
+        r"\neq": "≠",
+        r"\leq": "≤",
+        r"\geq": "≥",
+        r"\infty": "∞",
+        r"\det": "det",
+        r"\|": "‖",
+        r"\_": "_",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    text = re.sub(r"_\{([^{}]+)\}", lambda m: _translate_script(m.group(1), SUBSCRIPT_CHARS), text)
+    text = re.sub(r"\^\\?\{([^{}]+)\}", lambda m: _translate_script(m.group(1), SUPERSCRIPT_CHARS), text)
+    text = re.sub(r"_([0-9aehijklmnoprstuvx]+)", lambda m: _translate_script(m.group(1), SUBSCRIPT_CHARS), text)
+    text = re.sub(r"\^([0-9in]+)", lambda m: _translate_script(m.group(1), SUPERSCRIPT_CHARS), text)
+    text = text.replace("\\", "")
+    return re.sub(r"[ \t]+", " ", text).strip()
+
+
+def _pdf_text_html(value: Any) -> str:
+    return html.escape(_latex_to_readable_text(value)).replace("\n", "<br>")
 
 
 def _success(data: Any, **extra: Any) -> dict[str, Any]:
@@ -123,29 +192,29 @@ def _fallback_reportlab_render(report_spec: dict[str, Any], filename: str) -> No
     styles = getSampleStyleSheet()
     story: list[Any] = []
 
-    story.append(Paragraph(html.escape(str(report_spec.get("title") or "Rapport")), styles["Title"]))
+    story.append(Paragraph(html.escape(_latex_to_readable_text(report_spec.get("title") or "Rapport")), styles["Title"]))
     subtitle = report_spec.get("subtitle")
     if subtitle:
-        story.append(Paragraph(html.escape(str(subtitle)), styles["Normal"]))
+        story.append(Paragraph(html.escape(_latex_to_readable_text(subtitle)), styles["Normal"]))
     story.append(Spacer(1, 0.5 * cm))
 
     for section in report_spec.get("sections", []):
         if not isinstance(section, dict):
             continue
-        story.append(Paragraph(html.escape(str(section.get("title") or "Section")), styles["Heading2"]))
+        story.append(Paragraph(html.escape(_latex_to_readable_text(section.get("title") or "Section")), styles["Heading2"]))
         if section.get("summary"):
-            story.append(Paragraph(html.escape(str(section["summary"])), styles["Normal"]))
+            story.append(Paragraph(html.escape(_latex_to_readable_text(section["summary"])), styles["Normal"]))
             story.append(Spacer(1, 0.2 * cm))
 
         if section.get("type") == "table":
             columns = section.get("columns") or []
             rows = section.get("rows") or []
-            table_data = [[str(column.get("label") or column.get("key") or "") for column in columns]]
+            table_data = [[_latex_to_readable_text(column.get("label") or column.get("key") or "") for column in columns]]
             for row in rows:
                 if isinstance(row, dict):
-                    table_data.append([_normalize_cell(row.get(str(column.get("key")))) for column in columns])
+                    table_data.append([_latex_to_readable_text(row.get(str(column.get("key")))) for column in columns])
                 elif isinstance(row, list):
-                    table_data.append([_normalize_cell(cell) for cell in row])
+                    table_data.append([_latex_to_readable_text(cell) for cell in row])
 
             if len(table_data) == 1:
                 table_data.append(["Aucune donnee"] + [""] * max(len(table_data[0]) - 1, 0))
@@ -156,10 +225,10 @@ def _fallback_reportlab_render(report_spec: dict[str, Any], filename: str) -> No
             for item in section.get("items") or []:
                 for paragraph in str(item).splitlines():
                     if paragraph.strip():
-                        story.append(Paragraph(html.escape(paragraph.strip()), styles["Normal"]))
+                        story.append(Paragraph(html.escape(_latex_to_readable_text(paragraph.strip())), styles["Normal"]))
         else:
             for item in section.get("items") or []:
-                story.append(Paragraph(f"- {html.escape(_normalize_cell(item))}", styles["Normal"]))
+                story.append(Paragraph(f"- {html.escape(_latex_to_readable_text(item))}", styles["Normal"]))
         story.append(Spacer(1, 0.5 * cm))
 
     doc.build(story)
@@ -180,6 +249,7 @@ def render_dynamic_pdf(report_spec: dict[str, Any]) -> str:
             loader=FileSystemLoader(str(TEMPLATE_DIR)),
             autoescape=select_autoescape(["html", "xml"]),
         )
+        env.filters["pdf_text"] = _pdf_text_html
         template = env.get_template(PDF_TEMPLATE)
         html_content = template.render(report=report_spec)
         HTML(string=html_content, base_url=str(TEMPLATE_DIR)).write_pdf(filename)

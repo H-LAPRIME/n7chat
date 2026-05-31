@@ -6,7 +6,8 @@ import { fetchApi, getApiUrl } from "@/lib/api";
 import { ChatArtifact, Message } from "@/lib/types";
 import { getAccessToken } from "@/lib/auth";
 import { streamChat } from "@/lib/sse";
-import { Send, User as UserIcon, Bot, Info, Loader2, Download } from "lucide-react";
+import { Send, User as UserIcon, Bot, Info, Loader2, Download, Square } from "lucide-react";
+import katex from "katex";
 
 // ── Typing animation styles ────────────────────────────────────────────────
 const TYPING_STYLES = `
@@ -27,6 +28,16 @@ const TYPING_STYLES = `
     font-size: 0.9em;
     vertical-align: baseline;
   }
+  .math-block {
+    overflow-x: auto;
+    max-width: 100%;
+  }
+  .math-block .katex-display {
+    margin: 0.35rem 0;
+  }
+  .math-inline .katex {
+    font-size: 1.02em;
+  }
   .msg-enter {
     animation: fadeSlideIn 0.25s ease both;
   }
@@ -38,16 +49,85 @@ function isTableSeparator(line: string) {
 
 function looksLikeMarkdown(content: string) {
   const lines = content.split("\n").map((line) => line.trim());
-  return lines.some((line) => line.startsWith("#")) || lines.some((line, index) => line.startsWith("|") && isTableSeparator(lines[index + 1] || ""));
+  return (
+    lines.some((line) => line.startsWith("#")) ||
+    lines.some((line, index) => line.startsWith("|") && isTableSeparator(lines[index + 1] || "")) ||
+    /\[[^\]]+\]\(https?:\/\/[^)]+\)/.test(content) ||
+    /\\\(|\\\[|\$\$/.test(content)
+  );
+}
+
+function renderMath(value: string, displayMode: boolean, key: number | string) {
+  try {
+    return (
+      <span
+        key={key}
+        className={displayMode ? "math-block block rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 my-2" : "math-inline"}
+        dangerouslySetInnerHTML={{
+          __html: katex.renderToString(value, {
+            displayMode,
+            throwOnError: false,
+            strict: false,
+            trust: false,
+          }),
+        }}
+      />
+    );
+  } catch {
+    return <code key={key} className="rounded bg-slate-100 px-1 py-0.5 text-sm">{value}</code>;
+  }
 }
 
 function renderInlineMarkdown(value: string) {
-  return value.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
+  return value.split(/(\\\(.+?\\\)|\[[^\]]+\]\(https?:\/\/[^)]+\)|\*\*[^*]+\*\*)/g).map((part, index) => {
+    const inlineMath = part.match(/^\\\(([\s\S]+)\\\)$/);
+    if (inlineMath) {
+      return renderMath(inlineMath[1], false, index);
+    }
+    const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+    if (link) {
+      return (
+        <a
+          key={index}
+          href={link[2]}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-semibold text-primary underline decoration-primary/30 underline-offset-2 hover:text-primary-dark"
+        >
+          {link[1]}
+        </a>
+      );
+    }
     if (part.startsWith("**") && part.endsWith("**")) {
       return <strong key={index}>{part.slice(2, -2)}</strong>;
     }
     return part;
   });
+}
+
+function extractDisplayMath(lines: string[], startIndex: number) {
+  const first = lines[startIndex].trim();
+  const closeDelimiter = first.startsWith("$$") ? "$$" : "\\]";
+  let math = first.replace(/^(\$\$|\\\[)/, "");
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const current = index === startIndex ? math : lines[index];
+    const closeAt = current.indexOf(closeDelimiter);
+    if (closeAt >= 0) {
+      math = [
+        math,
+        ...(index === startIndex ? [] : [current.slice(0, closeAt)]),
+      ].join("\n");
+      return { math: math.replace(/(\$\$|\\\])\s*$/, "").trim(), nextIndex: index + 1 };
+    }
+    index += 1;
+    if (index < lines.length) {
+      math += `\n${lines[index]}`;
+    }
+  }
+
+  return { math: math.trim(), nextIndex: index };
 }
 
 function MarkdownMessage({ content }: { content: string }) {
@@ -60,6 +140,13 @@ function MarkdownMessage({ content }: { content: string }) {
 
     if (!line) {
       index += 1;
+      continue;
+    }
+
+    if (line.startsWith("\\[") || line.startsWith("$$")) {
+      const display = extractDisplayMath(lines, index);
+      nodes.push(<div key={index}>{renderMath(display.math, true, `math-${index}`)}</div>);
+      index = display.nextIndex;
       continue;
     }
 
@@ -173,6 +260,14 @@ function ArtifactButton({ artifact }: { artifact: ChatArtifact }) {
   );
 }
 
+const WELCOME_MESSAGE: Message = {
+  id: "welcome-message",
+  sender_type: "assistant",
+  content: "Bonjour, je suis N7Chat. Posez-moi une question sur vos cours, vos notes, vos absences, les evenements ou vos documents.",
+  message_type: "text",
+  created_at: new Date(0).toISOString(),
+};
+
 export default function ChatPage() {
   const { activeConversation, createConversation, loadConversations } = useConversations();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -190,7 +285,10 @@ export default function ChatPage() {
   const charQueue = useRef<string[]>([]);
   const typewriterRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamingIdRef = useRef<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const stopRequestedRef = useRef(false);
   const sseFinishedRef = useRef(false); // true once [DONE] received
+  const skipNextHistoryLoadForConvRef = useRef<string | null>(null);
 
   const startTypewriter = useCallback((assistantId: string) => {
     if (typewriterRef.current) return; // already running
@@ -222,6 +320,28 @@ export default function ChatPage() {
     }
     charQueue.current = [];
   }, []);
+
+  const stopStreaming = useCallback(() => {
+    stopRequestedRef.current = true;
+    const assistantId = streamingIdRef.current;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    sseFinishedRef.current = true;
+    stopTypewriter();
+    setIsStreaming(false);
+    setStreamingId(null);
+    streamingIdRef.current = null;
+
+    if (assistantId) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId && !m.content
+            ? { ...m, content: "Generation arretee." }
+            : m
+        )
+      );
+    }
+  }, [stopTypewriter]);
   // ─────────────────────────────────────────────────────────────────────────
 
   // Auto-scroll logic
@@ -241,9 +361,14 @@ export default function ChatPage() {
       }
       setIsLoadingHistory(true);
       try {
+        if (skipNextHistoryLoadForConvRef.current === activeConversation.id) {
+          skipNextHistoryLoadForConvRef.current = null;
+          return;
+        }
         const history = await fetchApi<Message[]>(`/chat/conversations/${activeConversation.id}/messages`);
         // History returns newest first for infinite scroll, we need oldest first for UI
-        setMessages(history.reverse());
+        const orderedHistory = history.reverse();
+        setMessages(orderedHistory.length > 0 ? orderedHistory : [WELCOME_MESSAGE]);
       } catch {
         console.error("Failed to fetch history");
       } finally {
@@ -262,6 +387,7 @@ export default function ChatPage() {
     if (!convId) {
       const newConv = await createConversation(input.slice(0, 30) + "...");
       convId = newConv.id;
+      skipNextHistoryLoadForConvRef.current = newConv.id;
     }
 
     const token = getAccessToken();
@@ -287,18 +413,25 @@ export default function ChatPage() {
         created_at: new Date().toISOString()
     };
 
-    setMessages((prev) => [...prev, newUserMsg, newAssistantMsg]);
+    setMessages((prev) => [
+      ...prev.filter((message) => message.id !== WELCOME_MESSAGE.id),
+      newUserMsg,
+      newAssistantMsg,
+    ]);
     setInput("");
     setIsStreaming(true);
     setStreamingId(assistantId);
     streamingIdRef.current = assistantId;
+    abortControllerRef.current = new AbortController();
+    stopRequestedRef.current = false;
     sseFinishedRef.current = false;
     charQueue.current = [];
     startTypewriter(assistantId);
 
     try {
       // Async generator loop — push chunks into the typewriter queue
-      for await (const chunk of streamChat(convId, newUserMsg.content, token)) {
+      for await (const chunk of streamChat(convId, newUserMsg.content, token, abortControllerRef.current.signal)) {
+        if (stopRequestedRef.current) break;
         if (chunk.chunk) {
           // Update message_type immediately (non-visible metadata)
           const text: string = chunk.chunk;
@@ -333,6 +466,9 @@ export default function ChatPage() {
       }
       await loadConversations();
     } catch (e) {
+      if (stopRequestedRef.current || (e instanceof DOMException && e.name === "AbortError")) {
+        return;
+      }
       console.error("Streaming failed", e);
       stopTypewriter();
       setMessages((prev) =>
@@ -342,6 +478,7 @@ export default function ChatPage() {
       );
     } finally {
       // Signal typewriter that no more chunks are coming
+      abortControllerRef.current = null;
       sseFinishedRef.current = true;
       // If queue is already empty, stop immediately
       if (charQueue.current.length === 0) {
@@ -372,13 +509,24 @@ export default function ChatPage() {
                 placeholder="Message N7Chat..."
                 className="flex-1 px-4 py-3 bg-transparent outline-none"
               />
-              <button 
-                type="submit" 
-                disabled={!input.trim()}
-                className="btn-primary p-3 rounded-lg flex items-center justify-center aspect-square"
-              >
-                <Send size={20} />
-              </button>
+              {isStreaming ? (
+                <button
+                  type="button"
+                  onClick={stopStreaming}
+                  className="bg-danger text-white hover:bg-danger/90 p-3 rounded-lg flex items-center justify-center aspect-square transition-all"
+                  title="Arreter la generation"
+                >
+                  <Square size={18} fill="currentColor" />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  className="btn-primary p-3 rounded-lg flex items-center justify-center aspect-square"
+                >
+                  <Send size={20} />
+                </button>
+              )}
             </form>
         </div>
       </div>
@@ -462,17 +610,28 @@ export default function ChatPage() {
               className="flex-1 max-h-32 min-h-[44px] bg-transparent outline-none resize-none px-3 py-2.5 overflow-hidden"
               rows={1}
             />
-            <button 
-              type="submit" 
-              disabled={!input.trim() || isStreaming}
-              className={`p-3 rounded-xl flex items-center justify-center transition-all ${
-                input.trim() && !isStreaming 
-                  ? "bg-primary text-white hover:bg-primary-dark shadow-sm" 
-                  : "bg-slate-200 text-slate-400 pointer-events-none"
-              }`}
-            >
-              <Send size={20} />
-            </button>
+            {isStreaming ? (
+              <button
+                type="button"
+                onClick={stopStreaming}
+                className="p-3 rounded-xl flex items-center justify-center transition-all bg-danger text-white hover:bg-danger/90 shadow-sm"
+                title="Arreter la generation"
+              >
+                <Square size={20} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!input.trim()}
+                className={`p-3 rounded-xl flex items-center justify-center transition-all ${
+                  input.trim()
+                    ? "bg-primary text-white hover:bg-primary-dark shadow-sm"
+                    : "bg-slate-200 text-slate-400 pointer-events-none"
+                }`}
+              >
+                <Send size={20} />
+              </button>
+            )}
           </form>
           <div className="text-center mt-2">
             <p className="text-xs text-text-muted flex items-center justify-center gap-1">

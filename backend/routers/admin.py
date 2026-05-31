@@ -17,6 +17,7 @@ from backend.models.admin import (
     TeacherCreate,
     TeacherModuleAssignment,
 )
+from backend.security.passwords import PasswordTooLongError, hash_password
 
 router = APIRouter()
 
@@ -27,13 +28,13 @@ def _require_admin(user: dict[str, Any]) -> None:
 
 
 def _hash_password(password: str) -> str:
-    if password.startswith("dev-"):
-        return password
     try:
-        from passlib.context import CryptContext
-
-        context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-        return context.hash(password)
+        return hash_password(password)
+    except PasswordTooLongError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

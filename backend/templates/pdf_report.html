@@ -68,17 +68,17 @@
     </style>
   </head>
   <body>
-    <h1>{{ report.title }}</h1>
+    <h1>{{ report.title | pdf_text | safe }}</h1>
     {% if report.subtitle %}
-      <div class="subtitle">{{ report.subtitle }}</div>
+      <div class="subtitle">{{ report.subtitle | pdf_text | safe }}</div>
     {% endif %}
     <div class="rule"></div>
 
     {% for section in report.sections %}
       <section>
-        <h2>{{ section.title }}</h2>
+        <h2>{{ section.title | pdf_text | safe }}</h2>
         {% if section.summary %}
-          <p>{{ section.summary }}</p>
+          <p>{{ section.summary | pdf_text | safe }}</p>
         {% endif %}
 
         {% if section.type == "table" %}
@@ -86,7 +86,7 @@
             <thead>
               <tr>
                 {% for column in section.columns %}
-                  <th>{{ column.label }}</th>
+                  <th>{{ column.label | pdf_text | safe }}</th>
                 {% endfor %}
               </tr>
             </thead>
@@ -95,7 +95,7 @@
                 {% for row in section.rows %}
                   <tr>
                     {% for column in section.columns %}
-                      <td>{{ row.get(column.key, "") }}</td>
+                      <td>{{ row.get(column.key, "") | pdf_text | safe }}</td>
                     {% endfor %}
                   </tr>
                 {% endfor %}
@@ -108,13 +108,13 @@
           </table>
         {% elif section.type == "text" %}
           {% for item in section.items %}
-            <p>{{ item | replace("\n", "<br>") | safe }}</p>
+            <p>{{ item | pdf_text | safe }}</p>
           {% endfor %}
         {% else %}
           {% if section.items %}
             <ul>
               {% for item in section.items %}
-                <li>{{ item }}</li>
+                <li>{{ item | pdf_text | safe }}</li>
               {% endfor %}
             </ul>
           {% else %}

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid5, NAMESPACE_URL
 
-from backend.db.supabase import execute, get_supabase_client
+from backend.db.supabase import execute, fetch_one
 from backend.db.vector import delete_document_chunks, upsert_document_chunk
 from backend.tools.rag_tool import embed_text
 
@@ -28,6 +28,17 @@ def resolve_admin_document_source_type(document_category: str | None) -> str:
     if category in {"timetable", "news", "event", "other"}:
         return category
     return "admin_document"
+
+
+def _audience_label(visibility_scope: str | None, filiere: str | None = None, module_name: str | None = None) -> str:
+    scope = visibility_scope or "public"
+    if scope == "public":
+        return "Public"
+    if scope == "module":
+        return f"Module: {module_name}" if module_name else "Specific module"
+    if scope == "filiere":
+        return f"Class: {filiere}" if filiere else "Specific class"
+    return scope
 
 
 def chunk_text(
@@ -93,20 +104,31 @@ async def index_document(
 
 async def trigger_index_course(course_id: str) -> int:
     """Compatibility wrapper for indexing rows from the courses table."""
-    supabase = get_supabase_client()
-    course = (
-        supabase.table("courses")
-        .select("*, modules(name, filiere_id, filieres(name))")
-        .eq("id", course_id)
-        .single()
-        .execute()
-        .data
+    course = fetch_one(
+        """
+        SELECT
+          c.*,
+          m.name AS module_name,
+          m.filiere_id AS module_filiere_id,
+          f.name AS filiere_name,
+          e.first_name AS teacher_first_name,
+          e.last_name AS teacher_last_name,
+          e.teacher_code
+        FROM courses c
+        LEFT JOIN modules m ON m.id = c.module_id
+        LEFT JOIN filieres f ON f.id = COALESCE(c.filiere_id, m.filiere_id)
+        LEFT JOIN enseignants e ON e.id = c.uploaded_by
+        WHERE c.id = %(id)s
+        """,
+        {"id": course_id},
     )
     if not course:
         return 0
 
-    module = course.get("modules") or {}
-    filiere = module.get("filieres") or {}
+    course = dict(course)
+    visibility_scope = course.get("visibility_scope") or ("filiere" if course.get("module_filiere_id") else "public")
+    filiere_id = course.get("filiere_id") or course.get("module_filiere_id")
+    uploader_name = " ".join(part for part in [course.get("teacher_first_name"), course.get("teacher_last_name")] if part).strip()
     content = f"{course.get('title', '')}. {course.get('description', '')}".strip()
     try:
         count = await index_document(
@@ -115,14 +137,20 @@ async def trigger_index_course(course_id: str) -> int:
             source_table="courses",
             source_url=course.get("file_url"),
             module_id=course.get("module_id"),
-            filiere_id=module.get("filiere_id"),
-            visibility_scope="filiere" if module.get("filiere_id") else "public",
+            filiere_id=filiere_id,
+            visibility_scope=visibility_scope,
             content=content,
             title=course.get("title"),
-            module_name=module.get("name"),
-            filiere=filiere.get("name"),
+            module_name=course.get("module_name"),
+            filiere=course.get("filiere_name"),
             file_type=course.get("file_type"),
-            metadata={"uploaded_by": course.get("uploaded_by")},
+            metadata={
+                "uploaded_by": str(course.get("uploaded_by")) if course.get("uploaded_by") else None,
+                "uploader_name": uploader_name,
+                "uploader_role": "teacher",
+                "teacher_code": course.get("teacher_code"),
+                "accessibility": _audience_label(visibility_scope, course.get("filiere_name"), course.get("module_name")),
+            },
         )
         execute("UPDATE courses SET index_status = 'indexed' WHERE id = %(id)s", {"id": course_id})
         return count
@@ -133,20 +161,31 @@ async def trigger_index_course(course_id: str) -> int:
 
 async def index_course_content(course_id: str, content: str) -> int:
     """Index extracted course-file text for an existing course row."""
-    supabase = get_supabase_client()
-    course = (
-        supabase.table("courses")
-        .select("*, modules(name, filiere_id, filieres(name))")
-        .eq("id", course_id)
-        .single()
-        .execute()
-        .data
+    course = fetch_one(
+        """
+        SELECT
+          c.*,
+          m.name AS module_name,
+          m.filiere_id AS module_filiere_id,
+          f.name AS filiere_name,
+          e.first_name AS teacher_first_name,
+          e.last_name AS teacher_last_name,
+          e.teacher_code
+        FROM courses c
+        LEFT JOIN modules m ON m.id = c.module_id
+        LEFT JOIN filieres f ON f.id = COALESCE(c.filiere_id, m.filiere_id)
+        LEFT JOIN enseignants e ON e.id = c.uploaded_by
+        WHERE c.id = %(id)s
+        """,
+        {"id": course_id},
     )
     if not course:
         return 0
 
-    module = course.get("modules") or {}
-    filiere = module.get("filieres") or {}
+    course = dict(course)
+    visibility_scope = course.get("visibility_scope") or ("filiere" if course.get("module_filiere_id") else "public")
+    filiere_id = course.get("filiere_id") or course.get("module_filiere_id")
+    uploader_name = " ".join(part for part in [course.get("teacher_first_name"), course.get("teacher_last_name")] if part).strip()
     fallback = f"{course.get('title', '')}. {course.get('description', '')}".strip()
     searchable = "\n\n".join(part for part in [fallback, content.strip()] if part)
     try:
@@ -156,15 +195,19 @@ async def index_course_content(course_id: str, content: str) -> int:
             source_table="courses",
             source_url=course.get("file_url"),
             module_id=course.get("module_id"),
-            filiere_id=module.get("filiere_id"),
-            visibility_scope="filiere" if module.get("filiere_id") else "public",
+            filiere_id=filiere_id,
+            visibility_scope=visibility_scope,
             content=searchable,
             title=course.get("title"),
-            module_name=module.get("name"),
-            filiere=filiere.get("name"),
+            module_name=course.get("module_name"),
+            filiere=course.get("filiere_name"),
             file_type=course.get("file_type"),
             metadata={
-                "uploaded_by": course.get("uploaded_by"),
+                "uploaded_by": str(course.get("uploaded_by")) if course.get("uploaded_by") else None,
+                "uploader_name": uploader_name,
+                "uploader_role": "teacher",
+                "teacher_code": course.get("teacher_code"),
+                "accessibility": _audience_label(visibility_scope, course.get("filiere_name"), course.get("module_name")),
                 "indexed_content": "uploaded_file",
             },
         )
@@ -183,6 +226,7 @@ async def index_admin_document_upload(
     content: str,
     file_type: str | None = None,
     uploaded_by: str | None = None,
+    uploader_name: str | None = None,
     description: str | None = None,
     document_category: str | None = None,
     visibility_scope: str = "public",
@@ -207,11 +251,14 @@ async def index_admin_document_upload(
         metadata={
             "storage_path": storage_path,
             "uploaded_by": uploaded_by,
+            "uploader_name": uploader_name or "Admin",
+            "uploader_role": "admin",
             "description": description,
             "document_category": document_category or "admin_document",
             "visibility_scope": visibility_scope,
             "filiere_id": filiere_id,
             "module_id": module_id,
+            "accessibility": _audience_label(visibility_scope),
             "indexed_content": "uploaded_file",
         },
     )

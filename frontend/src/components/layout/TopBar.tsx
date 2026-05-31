@@ -1,12 +1,17 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import { useAuth } from "@/context/AuthContext";
+import { getApiUrl } from "@/lib/api";
 import { LogOut, User as UserIcon } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 
 export default function TopBar() {
   const { user, logout } = useAuth();
   const pathname = usePathname();
+  const [logoFailed, setLogoFailed] = useState(false);
+  const logoUrl = `${getApiUrl()}/profile/assets/logo_enset.png`;
 
   const getPageTitle = () => {
     if (pathname.includes("/chat")) return "Chat Assistant";
@@ -20,7 +25,19 @@ export default function TopBar() {
 
   return (
     <header className="h-16 bg-white border-b border-border flex items-center justify-between px-6 shrink-0 shadow-sm z-10">
-      <h2 className="text-xl font-bold tracking-tight text-text">{getPageTitle()}</h2>
+      <div className="flex items-center gap-3 min-w-0">
+        <h2 className="text-xl font-bold tracking-tight text-text truncate">{getPageTitle()}</h2>
+        {!logoFailed && (
+          <div className="hidden sm:flex h-12 w-12 items-center justify-center overflow-hidden">
+            <img
+              src={logoUrl}
+              alt="ENSET logo"
+              className="h-full w-full object-contain"
+              onError={() => setLogoFailed(true)}
+            />
+          </div>
+        )}
+      </div>
       
       <div className="flex items-center gap-4">
         {user && (
@@ -31,8 +48,12 @@ export default function TopBar() {
               </p>
               <p className="text-xs text-text-muted capitalize">{user.role}</p>
             </div>
-            <div className="w-10 h-10 rounded-full bg-primary-light flex items-center justify-center text-primary border border-primary/20 shadow-sm">
-              <UserIcon size={20} />
+            <div className="w-10 h-10 rounded-full bg-primary-light flex items-center justify-center text-primary border border-primary/20 shadow-sm overflow-hidden">
+              {user.photo_url ? (
+                <img src={user.photo_url} alt="Profile photo" className="h-full w-full object-cover" />
+              ) : (
+                <UserIcon size={20} />
+              )}
             </div>
           </div>
         )}

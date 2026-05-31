@@ -287,6 +287,9 @@ def get_upcoming_events(
     limit: int = DEFAULT_LIMIT,
     filiere_id: str | None = None,
     is_staff: bool = False,
+    is_admin: bool = False,
+    teacher_id: str | None = None,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     """Return upcoming school events, exams, holidays, meetings, and conferences."""
     query = """
@@ -301,10 +304,28 @@ def get_upcoming_events(
     FROM events
     WHERE start_date >= CURRENT_TIMESTAMP
       AND (
-        %(is_staff)s = TRUE
+        %(is_admin)s = TRUE
+        OR created_by = %(user_id)s::uuid
         OR visibility_scope = 'public'
-        OR filiere_id = %(filiere_id)s::uuid
-        OR module_id IN (SELECT id FROM modules WHERE filiere_id = %(filiere_id)s::uuid)
+        OR (
+          %(teacher_id)s::uuid IS NOT NULL
+          AND (
+            module_id IN (SELECT id FROM modules WHERE teacher_id = %(teacher_id)s::uuid)
+            OR filiere_id IN (
+              SELECT DISTINCT filiere_id
+              FROM modules
+              WHERE teacher_id = %(teacher_id)s::uuid
+                AND filiere_id IS NOT NULL
+            )
+          )
+        )
+        OR (
+          %(filiere_id)s::uuid IS NOT NULL
+          AND (
+            filiere_id = %(filiere_id)s::uuid
+            OR module_id IN (SELECT id FROM modules WHERE filiere_id = %(filiere_id)s::uuid)
+          )
+        )
       )
     ORDER BY start_date ASC
     LIMIT %(limit)s
@@ -316,6 +337,9 @@ def get_upcoming_events(
                 "limit": _normalize_limit(limit),
                 "filiere_id": filiere_id,
                 "is_staff": is_staff,
+                "is_admin": is_admin,
+                "teacher_id": teacher_id,
+                "user_id": user_id,
             },
         )
         return _success(rows, query)

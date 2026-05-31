@@ -13,6 +13,8 @@ from backend.flows.storage_flow import (
     DOCUMENT_BUCKET,
     LOGO_BUCKET,
     PROFILE_BUCKET,
+    download_storage_file,
+    public_storage_url,
     upload_request_file,
 )
 
@@ -22,6 +24,7 @@ __all__ = [
     "create_notification",
     "COURSE_BUCKET",
     "DOCUMENT_BUCKET",
+    "download_storage_file",
     "extract_text_from_bytes",
     "index_admin_document_upload",
     "index_course_content",
@@ -30,6 +33,7 @@ __all__ = [
     "notify_event_created",
     "notify_users",
     "PROFILE_BUCKET",
+    "public_storage_url",
     "trigger_index_course",
     "upload_request_file",
 ]

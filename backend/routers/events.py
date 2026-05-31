@@ -93,10 +93,28 @@ def list_events(
         FROM events
         WHERE (%(upcoming_only)s = FALSE OR start_date >= CURRENT_TIMESTAMP)
           AND (
-            %(is_staff)s = TRUE
+            %(role)s = 'admin'
+            OR created_by = %(user_id)s::uuid
             OR visibility_scope = 'public'
-            OR (visibility_scope = 'filiere' AND filiere_id = %(filiere_id)s::uuid)
-            OR (visibility_scope = 'module' AND filiere_id = %(filiere_id)s::uuid)
+            OR (
+              %(role)s = 'teacher'
+              AND (
+                module_id IN (SELECT id FROM modules WHERE teacher_id = %(teacher_id)s::uuid)
+                OR filiere_id IN (
+                  SELECT DISTINCT filiere_id
+                  FROM modules
+                  WHERE teacher_id = %(teacher_id)s::uuid
+                    AND filiere_id IS NOT NULL
+                )
+              )
+            )
+            OR (
+              %(role)s = 'student'
+              AND (
+                filiere_id = %(filiere_id)s::uuid
+                OR module_id IN (SELECT id FROM modules WHERE filiere_id = %(filiere_id)s::uuid)
+              )
+            )
           )
         ORDER BY start_date ASC
         LIMIT %(limit)s
@@ -104,7 +122,9 @@ def list_events(
         {
             "upcoming_only": upcoming_only,
             "limit": limit,
-            "is_staff": (user.get("role") or "").lower() in {"teacher", "admin"},
+            "role": (user.get("role") or "").lower(),
+            "user_id": user.get("sub"),
+            "teacher_id": user.get("teacher_id"),
             "filiere_id": user.get("filiere_id"),
         },
     )

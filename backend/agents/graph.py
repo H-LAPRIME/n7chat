@@ -137,6 +137,7 @@ async def rag_node(state: AgentState) -> AgentState:
     result = await run_rag_agent(
         message=state.get("message", ""),
         user=state.get("user", {}),
+        history=state.get("history", []),
     )
     elapsed = time.perf_counter() - t0
     error = result.get("error")
@@ -172,6 +173,7 @@ async def hybrid_node(state: AgentState) -> AgentState:
         run_rag_agent(
             message=state.get("message", ""),
             user=state.get("user", {}),
+            history=state.get("history", []),
         ),
     )
     elapsed = time.perf_counter() - t0
@@ -302,6 +304,16 @@ _PDF_OFFER = (
 )
 
 
+def _should_append_pdf_offer(final_state: AgentState) -> bool:
+    if not final_state.get("suggest_pdf") or final_state.get("artifacts"):
+        return False
+    if final_state.get("intent") == "courses":
+        text = (final_state.get("message") or "").lower()
+        if any(word in text for word in ["cours", "cour", "support", "document", "upload", "uploaded", "uploade", "db"]):
+            return False
+    return True
+
+
 async def run_agent(
     message: str,
     history: list[dict[str, Any]] | None,
@@ -342,7 +354,7 @@ async def run_agent(
 
     # Append PDF offer when orchestrator signalled it and we haven't generated
     # a PDF already (artifacts list would be non-empty in that case).
-    if final_state.get("suggest_pdf") and not final_state.get("artifacts"):
+    if _should_append_pdf_offer(final_state):
         response = response + _PDF_OFFER
 
     yield response

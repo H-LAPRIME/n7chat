@@ -8,6 +8,7 @@ best report it can from the context already collected by the graph.
 from __future__ import annotations
 
 import asyncio
+import unicodedata
 from typing import Any
 
 from backend.tasks.pdf_llm_task import (
@@ -37,6 +38,29 @@ def _last_assistant_response(history: list[dict[str, Any]] | None) -> str:
     )
 
 
+def _fold_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value.lower())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _references_previous_answer(message: str) -> bool:
+    text = _fold_text(message)
+    return any(
+        marker in text
+        for marker in (
+            "de ca",
+            "de cela",
+            "de cette reponse",
+            "de ce resume",
+            "ce resume",
+            "cette reponse",
+            "la reponse precedente",
+            "last answer",
+            "this summary",
+        )
+    )
+
+
 def build_pdf_report_sync(
     message: str,
     user: dict[str, Any] | None = None,
@@ -51,12 +75,17 @@ def build_pdf_report_sync(
     user_id = user.get("sub") or user.get("id")
 
     selected_type = infer_report_type_task(message, report_type)
+    last_assistant = _last_assistant_response(history)
+    if _references_previous_answer(message) and last_assistant:
+        data_context = {"last_assistant_response": last_assistant}
+        sql_context = {}
+
     enriched_context = {
         **data_context,
         "last_assistant_response": (
             data_context.get("current_response")
             or data_context.get("last_assistant_response")
-            or _last_assistant_response(history)
+            or last_assistant
         ),
     }
 

@@ -1,7 +1,9 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { getApiUrl } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { GraduationCap, ArrowRight, Loader2 } from "lucide-react";
 
@@ -10,8 +12,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [logoFailed, setLogoFailed] = useState(false);
   const { login } = useAuth();
   const router = useRouter();
+  const logoUrl = `${getApiUrl()}/profile/assets/logo_enset.png`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,6 +51,20 @@ export default function LoginPage() {
 
       <div className="flex-1 flex flex-col justify-center items-center px-6 lg:px-16 w-full">
         <div className="w-full max-w-md bg-white p-8 sm:p-10 rounded-2xl shadow-md border border-border/50">
+          <div className="mb-7 flex justify-center lg:justify-start">
+            <div className="h-24 w-24 flex items-center justify-center overflow-hidden">
+              {!logoFailed ? (
+                <img
+                  src={logoUrl}
+                  alt="ENSET logo"
+                  className="h-full w-full object-contain"
+                  onError={() => setLogoFailed(true)}
+                />
+              ) : (
+                <GraduationCap size={32} className="text-primary" />
+              )}
+            </div>
+          </div>
           <div className="mb-8 text-center lg:text-left">
             <h2 className="text-3xl font-bold text-text mb-2 tracking-tight">Welcome Back</h2>
             <p className="text-text-muted">Sign in to your academic account</p>

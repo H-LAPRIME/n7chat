@@ -22,6 +22,7 @@ from backend.tools.sql_tool import (
     get_student_absences,
     get_student_notes,
     get_student_profile,
+    get_teacher_modules,
     get_upcoming_events,
     get_user_notifications,
 )
@@ -49,6 +50,8 @@ def collect_sql_context(intent: str, user: dict[str, Any]) -> dict[str, Any]:
     student_id = user.get("student_id") or student.get("id")
     user_id = user.get("sub") or user.get("id")
     filiere_id = user.get("filiere_id") or student.get("filiere_id")
+    role = (user.get("role") or "").lower()
+    teacher_id = user.get("teacher_id")
 
     data: dict[str, Any] = {}
     if user_id:
@@ -74,16 +77,22 @@ def collect_sql_context(intent: str, user: dict[str, Any]) -> dict[str, Any]:
             )
         else:
             data["modules"] = {"ok": False, "error": "filiere_id is required", "data": []}
-        data["events"] = _tool_result(
-            get_upcoming_events,
-            {
-                "limit": 20,
-                "filiere_id": filiere_id,
-                "is_staff": (user.get("role") or "").lower() in {"teacher", "admin"},
-            },
-        )
+        event_payload: dict[str, Any] = {
+            "limit": 20,
+            "filiere_id": filiere_id,
+            "is_staff": role in {"teacher", "admin"},
+        }
+        if role == "admin":
+            event_payload["is_admin"] = True
+        if role == "teacher" and teacher_id:
+            event_payload["teacher_id"] = teacher_id
+        if user_id:
+            event_payload["user_id"] = user_id
+        data["events"] = _tool_result(get_upcoming_events, event_payload)
     elif intent == "profile":
-        if filiere_id:
+        if role == "teacher" and teacher_id:
+            data["modules"] = _tool_result(get_teacher_modules, {"teacher_id": teacher_id})
+        elif filiere_id:
             data["modules"] = _tool_result(
                 get_filiere_modules,
                 {"filiere_id": filiere_id, "semester": user.get("semester")},

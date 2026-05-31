@@ -1,15 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Course, Module } from "@/lib/types";
+import { Course, Filiere, Module } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { BookOpen, FileText, Upload, ExternalLink, Search, X } from "lucide-react";
+import { BookOpen, FileText, Upload, ExternalLink, Search, X, Pencil, Trash2, Save } from "lucide-react";
 
 export default function CoursesPage() {
   const { user } = useAuth();
   const [courses, setCourses] = useState<Course[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
+  const [filieres, setFilieres] = useState<Filiere[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedModule, setSelectedModule] = useState("");
@@ -20,7 +21,18 @@ export default function CoursesPage() {
   const [uploadTitle, setUploadTitle] = useState("");
   const [uploadDesc, setUploadDesc] = useState("");
   const [uploadModule, setUploadModule] = useState("");
+  const [uploadFiliere, setUploadFiliere] = useState("");
+  const [uploadVisibilityScope, setUploadVisibilityScope] = useState<"public" | "filiere" | "module">("module");
   const [uploading, setUploading] = useState(false);
+  const [editingCourse, setEditingCourse] = useState<Course | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editModule, setEditModule] = useState("");
+  const [editFiliere, setEditFiliere] = useState("");
+  const [editVisibilityScope, setEditVisibilityScope] = useState<"public" | "filiere" | "module">("module");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const canManageCourses = user?.role === "teacher" || user?.role === "admin";
 
   const fetchCourses = useCallback(async () => {
     try {
@@ -32,16 +44,20 @@ export default function CoursesPage() {
       const data = await fetchApi<Course[]>(`/courses${query}`);
       setCourses(data);
       
-      if (user?.role === "teacher" || user?.role === "admin") {
-        const mods = await fetchApi<Module[]>("/courses/modules");
+      if (canManageCourses) {
+        const [mods, fils] = await Promise.all([
+          fetchApi<Module[]>("/courses/modules"),
+          fetchApi<Filiere[]>("/courses/filieres"),
+        ]);
         setModules(mods);
+        setFilieres(fils);
       }
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [search, selectedModule, user]);
+  }, [search, selectedModule, canManageCourses]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -51,8 +67,12 @@ export default function CoursesPage() {
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) return;
-    if (!uploadModule) {
+    if (uploadVisibilityScope === "module" && !uploadModule) {
       alert("Please select a module before uploading course material.");
+      return;
+    }
+    if (uploadVisibilityScope === "filiere" && !uploadFiliere) {
+      alert("Please select a class before uploading course material.");
       return;
     }
     setUploading(true);
@@ -62,7 +82,9 @@ export default function CoursesPage() {
       formData.append("file", file);
       if (uploadTitle) formData.append("title", uploadTitle);
       if (uploadDesc) formData.append("description", uploadDesc);
-      formData.append("module_id", uploadModule);
+      formData.append("visibility_scope", uploadVisibilityScope);
+      if (uploadVisibilityScope === "module") formData.append("module_id", uploadModule);
+      if (uploadVisibilityScope === "filiere") formData.append("filiere_id", uploadFiliere);
 
       await fetchApi("/courses/upload", {
         method: "POST",
@@ -73,7 +95,10 @@ export default function CoursesPage() {
       setFile(null);
       setUploadTitle("");
       setUploadDesc("");
-      fetchCourses();
+      setUploadModule("");
+      setUploadFiliere("");
+      setUploadVisibilityScope("module");
+      void fetchCourses();
     } catch (e) {
       console.error("Upload failed", e);
       alert("Failed to upload course material");
@@ -86,6 +111,62 @@ export default function CoursesPage() {
     return <FileText size={24} className="text-primary" />;
   };
 
+  const openEdit = (course: Course) => {
+    setEditingCourse(course);
+    setEditTitle(course.title);
+    setEditDesc(course.description || "");
+    setEditModule(course.module_id || "");
+    setEditFiliere(course.filiere_id || "");
+    setEditVisibilityScope(course.visibility_scope || "module");
+  };
+
+  const handleEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingCourse || !editTitle.trim()) return;
+    if (editVisibilityScope === "module" && !editModule) {
+      alert("Please select a module.");
+      return;
+    }
+    if (editVisibilityScope === "filiere" && !editFiliere) {
+      alert("Please select a class.");
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      await fetchApi(`/courses/${editingCourse.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: editTitle.trim(),
+          description: editDesc || null,
+          visibility_scope: editVisibilityScope,
+          module_id: editVisibilityScope === "module" ? editModule : null,
+          filiere_id: editVisibilityScope === "filiere" ? editFiliere : null,
+        }),
+      });
+      setEditingCourse(null);
+      void fetchCourses();
+    } catch (error) {
+      console.error("Course update failed", error);
+      alert("Failed to update course");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDelete = async (course: Course) => {
+    if (!confirm(`Delete "${course.title}" from courses and vector search?`)) return;
+    setDeletingId(course.id);
+    try {
+      await fetchApi(`/courses/${course.id}`, { method: "DELETE" });
+      setCourses((prev) => prev.filter((item) => item.id !== course.id));
+    } catch (error) {
+      console.error("Course delete failed", error);
+      alert("Failed to delete course");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const getIndexStatus = (status?: string) => {
     switch (status) {
       case "indexed":
@@ -95,6 +176,18 @@ export default function CoursesPage() {
       default:
         return { label: "Indexing", className: "bg-amber-50 text-amber-700 border-amber-200" };
     }
+  };
+
+  const getScopeLabel = (course: Course) => {
+    if ((course.visibility_scope || "module") === "public") return "Public";
+    if (course.visibility_scope === "filiere") return course.filiere_name ? `Class: ${course.filiere_name}` : "Class";
+    return course.module_name ? `Module: ${course.module_name}` : "Module";
+  };
+
+  const getUploaderLabel = (course: Course) => {
+    const name = course.uploader_name || [course.teacher_first_name, course.teacher_last_name].filter(Boolean).join(" ");
+    if (!name) return "Unknown uploader";
+    return course.teacher_code ? `${name} (${course.teacher_code})` : name;
   };
 
   return (
@@ -118,7 +211,7 @@ export default function CoursesPage() {
              />
           </div>
           
-          {(user?.role === "teacher" || user?.role === "admin") && (
+          {canManageCourses && (
             <>
               <select 
                 value={selectedModule} 
@@ -182,6 +275,12 @@ export default function CoursesPage() {
                      {course.module_name}
                   </span>
                 )}
+                <span className="ml-2 inline-block px-2.5 py-1 bg-primary-light text-primary text-xs font-semibold rounded-md mb-3 border border-primary/10">
+                  {getScopeLabel(course)}
+                </span>
+                <div className="text-xs text-slate-500 mb-3">
+                  Uploaded by <span className="font-semibold text-slate-700">{getUploaderLabel(course)}</span>
+                </div>
                 
                 {course.description && (
                   <p className="text-sm text-slate-500 line-clamp-3 my-2 bg-slate-50 p-3 rounded-lg border border-slate-100 italic">
@@ -194,14 +293,39 @@ export default function CoursesPage() {
                  <div className="text-xs text-slate-500">
                     {new Date(course.created_at).toLocaleDateString()}
                  </div>
-                 <a 
-                   href={course.file_url} 
-                   target="_blank" 
-                   rel="noopener noreferrer"
-                   className="text-primary hover:text-primary-dark font-medium text-sm flex items-center gap-1 bg-white px-3 py-1.5 rounded-md border border-slate-200 shadow-sm transition-colors"
-                 >
-                   View <ExternalLink size={14} />
-                 </a>
+                 <div className="flex items-center gap-2">
+                   {canManageCourses && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => openEdit(course)}
+                        className="text-slate-600 hover:text-primary bg-white p-2 rounded-md border border-slate-200 shadow-sm transition-colors"
+                        title="Edit"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deletingId === course.id}
+                        onClick={() => void handleDelete(course)}
+                        className="text-danger hover:bg-danger/10 bg-white p-2 rounded-md border border-slate-200 shadow-sm transition-colors disabled:opacity-50"
+                        title="Delete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </>
+                   )}
+                   {course.file_url && (
+                    <a 
+                      href={course.file_url} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-primary hover:text-primary-dark font-medium text-sm flex items-center gap-1 bg-white px-3 py-1.5 rounded-md border border-slate-200 shadow-sm transition-colors"
+                    >
+                      View <ExternalLink size={14} />
+                    </a>
+                   )}
+                 </div>
               </div>
             </div>
           ))}
@@ -247,18 +371,51 @@ export default function CoursesPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-text-muted mb-1">Module</label>
+                <label className="block text-sm font-semibold text-text-muted mb-1">Audience</label>
                 <select 
                   className="input-field bg-white"
-                  value={uploadModule}
-                  onChange={(e) => setUploadModule(e.target.value)}
+                  value={uploadVisibilityScope}
+                  onChange={(e) => setUploadVisibilityScope(e.target.value as "public" | "filiere" | "module")}
                 >
-                  <option value="">Select a module</option>
-                  {modules.map(m => (
-                    <option key={m.id} value={m.id}>{m.code} - {m.name}</option>
-                  ))}
+                  <option value="module">Specific module</option>
+                  <option value="filiere">Specific class</option>
+                  <option value="public">Public</option>
                 </select>
               </div>
+
+              {uploadVisibilityScope === "module" && (
+                <div>
+                  <label className="block text-sm font-semibold text-text-muted mb-1">Module</label>
+                  <select 
+                    className="input-field bg-white"
+                    value={uploadModule}
+                    onChange={(e) => setUploadModule(e.target.value)}
+                    required
+                  >
+                    <option value="">Select a module</option>
+                    {modules.map(m => (
+                      <option key={m.id} value={m.id}>{m.code} - {m.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {uploadVisibilityScope === "filiere" && (
+                <div>
+                  <label className="block text-sm font-semibold text-text-muted mb-1">Class</label>
+                  <select 
+                    className="input-field bg-white"
+                    value={uploadFiliere}
+                    onChange={(e) => setUploadFiliere(e.target.value)}
+                    required
+                  >
+                    <option value="">Select a class</option>
+                    {filieres.map(filiere => (
+                      <option key={filiere.id} value={filiere.id}>{filiere.code} - {filiere.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               
               <div>
                 <label className="block text-sm font-semibold text-text-muted mb-1">Description</label>
@@ -284,6 +441,72 @@ export default function CoursesPage() {
                   className="btn-primary px-6 flex items-center gap-2"
                 >
                   {uploading ? "Uploading..." : "Upload"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editingCourse && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-border/50">
+            <div className="px-6 py-4 border-b border-border bg-slate-50 flex justify-between items-center">
+              <h3 className="text-lg font-bold text-text flex items-center gap-2">
+                <Pencil size={20} className="text-primary" /> Edit Material
+              </h3>
+              <button onClick={() => setEditingCourse(null)} className="text-slate-400 hover:text-text transition-colors p-1">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleEdit} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-text-muted mb-1">Title</label>
+                <input className="input-field" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-text-muted mb-1">Audience</label>
+                <select
+                  className="input-field bg-white"
+                  value={editVisibilityScope}
+                  onChange={(e) => setEditVisibilityScope(e.target.value as "public" | "filiere" | "module")}
+                >
+                  <option value="module">Specific module</option>
+                  <option value="filiere">Specific class</option>
+                  <option value="public">Public</option>
+                </select>
+              </div>
+              {editVisibilityScope === "module" && (
+                <div>
+                  <label className="block text-sm font-semibold text-text-muted mb-1">Module</label>
+                  <select className="input-field bg-white" value={editModule} onChange={(e) => setEditModule(e.target.value)} required>
+                    <option value="">Select a module</option>
+                    {modules.map((m) => (
+                      <option key={m.id} value={m.id}>{m.code} - {m.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {editVisibilityScope === "filiere" && (
+                <div>
+                  <label className="block text-sm font-semibold text-text-muted mb-1">Class</label>
+                  <select className="input-field bg-white" value={editFiliere} onChange={(e) => setEditFiliere(e.target.value)} required>
+                    <option value="">Select a class</option>
+                    {filieres.map((filiere) => (
+                      <option key={filiere.id} value={filiere.id}>{filiere.code} - {filiere.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-semibold text-text-muted mb-1">Description</label>
+                <textarea className="input-field resize-none h-24" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
+              </div>
+              <div className="pt-4 flex justify-end gap-3 border-t border-border mt-6">
+                <button type="button" className="btn-outline px-5" onClick={() => setEditingCourse(null)}>Cancel</button>
+                <button type="submit" disabled={savingEdit} className="btn-primary px-6 flex items-center gap-2">
+                  <Save size={18} /> {savingEdit ? "Saving..." : "Save"}
                 </button>
               </div>
             </form>

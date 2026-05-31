@@ -99,6 +99,7 @@ def _fetch_student_profile(user_id: str) -> dict[str, Any]:
               s.last_name,
               s.phone,
               s.address,
+              s.photo_url,
               s.status,
               f.name          AS filiere_name,
               f.code          AS filiere_code,
@@ -130,7 +131,8 @@ def _fetch_teacher_profile(user_id: str) -> dict[str, Any]:
               e.phone,
               e.specialization,
               e.department_id,
-              e.office
+              e.office,
+              e.photo_url
             FROM enseignants e
             WHERE e.user_id = %(user_id)s
             """,

@@ -28,6 +28,15 @@ def _public_url(bucket: str, storage_path: str) -> str:
     return get_supabase_client().storage.from_(bucket).get_public_url(storage_path)
 
 
+def public_storage_url(bucket: str, storage_path: str) -> str:
+    return _public_url(bucket, storage_path)
+
+
+def download_storage_file(bucket: str, storage_path: str) -> bytes:
+    content = get_supabase_client().storage.from_(bucket).download(storage_path)
+    return bytes(content)
+
+
 async def upload_request_file(
     request: Request,
     *,
@@ -35,6 +44,8 @@ async def upload_request_file(
     prefix: str,
     max_bytes: int = MAX_UPLOAD_BYTES,
     required_fields: tuple[str, ...] = (),
+    allowed_content_types: tuple[str, ...] = (),
+    allowed_content_type_prefixes: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Read multipart field ``file`` and upload it to a Supabase Storage bucket."""
     upload, _content = await upload_request_file_with_content(
@@ -43,6 +54,8 @@ async def upload_request_file(
         prefix=prefix,
         max_bytes=max_bytes,
         required_fields=required_fields,
+        allowed_content_types=allowed_content_types,
+        allowed_content_type_prefixes=allowed_content_type_prefixes,
     )
     return upload
 
@@ -54,6 +67,8 @@ async def upload_request_file_with_content(
     prefix: str,
     max_bytes: int = MAX_UPLOAD_BYTES,
     required_fields: tuple[str, ...] = (),
+    allowed_content_types: tuple[str, ...] = (),
+    allowed_content_type_prefixes: tuple[str, ...] = (),
 ) -> tuple[dict[str, Any], bytes]:
     """Upload multipart ``file`` and also return its bytes for indexing flows."""
     try:
@@ -93,6 +108,16 @@ async def upload_request_file_with_content(
     filename = _clean_filename(file.filename or "upload")
     storage_path = f"{prefix.strip('/')}/{uuid4()}-{filename}"
     content_type = file.content_type or "application/octet-stream"
+    content_type_allowed = (
+        not allowed_content_types
+        or content_type in allowed_content_types
+        or any(content_type.startswith(prefix) for prefix in allowed_content_type_prefixes)
+    )
+    if not content_type_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported file type: {content_type}",
+        )
 
     get_supabase_client().storage.from_(bucket).upload(
         storage_path,

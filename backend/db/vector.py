@@ -121,6 +121,7 @@ def search_document_chunks(
     filiere_id: str | None = None,
     visibility_scope: str | None = None,
     accessible_filiere_id: str | None = None,
+    accessible_teacher_id: str | None = None,
     user_id: str | None = None,
     filiere: str | None = None,
     file_type: str | None = None,
@@ -153,7 +154,8 @@ def search_document_chunks(
               (
                 source_type = 'course'
                 AND (
-                  filiere_id = %(accessible_filiere_id)s
+                  visibility_scope = 'public'
+                  OR filiere_id = %(accessible_filiere_id)s
                   OR module_id IN (
                     SELECT id FROM modules WHERE filiere_id = %(accessible_filiere_id)s
                   )
@@ -173,6 +175,24 @@ def search_document_chunks(
             """
         )
         params["accessible_filiere_id"] = accessible_filiere_id
+    if accessible_teacher_id:
+        filters.append(
+            """
+            (
+              visibility_scope = 'public'
+              OR module_id IN (
+                SELECT id FROM modules WHERE teacher_id = %(accessible_teacher_id)s
+              )
+              OR filiere_id IN (
+                SELECT DISTINCT filiere_id
+                FROM modules
+                WHERE teacher_id = %(accessible_teacher_id)s
+                  AND filiere_id IS NOT NULL
+              )
+            )
+            """
+        )
+        params["accessible_teacher_id"] = accessible_teacher_id
     if user_id:
         filters.append("user_id = %(user_id)s")
         params["user_id"] = user_id

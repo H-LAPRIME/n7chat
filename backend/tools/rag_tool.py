@@ -87,6 +87,7 @@ def vector_search(
     filiere_id: str | None = None,
     visibility_scope: str | None = None,
     accessible_filiere_id: str | None = None,
+    accessible_teacher_id: str | None = None,
     user_id: str | None = None,
     filiere: str | None = None,
     file_type: str | None = None,
@@ -105,6 +106,7 @@ def vector_search(
         filiere_id=filiere_id,
         visibility_scope=visibility_scope,
         accessible_filiere_id=accessible_filiere_id,
+        accessible_teacher_id=accessible_teacher_id,
         user_id=user_id,
         filiere=filiere,
         file_type=file_type,
@@ -121,11 +123,18 @@ def format_rag_context(chunks: list[dict[str, Any]], max_chars: int = 6000) -> s
     for chunk in chunks:
         title = chunk.get("title") or chunk.get("source_name") or "Untitled"
         source_type = chunk.get("source_type") or "document"
+        metadata = chunk.get("metadata") or {}
         module = chunk.get("module_name") or chunk.get("filiere") or "general"
+        uploader = metadata.get("uploader_name") or chunk.get("uploader_name") or "unknown uploader"
+        uploader_role = metadata.get("uploader_role") or chunk.get("uploader_role") or "unknown role"
+        accessibility = metadata.get("accessibility") or chunk.get("visibility_scope") or "unknown access"
         similarity = chunk.get("similarity")
         score = f" | score={similarity:.3f}" if isinstance(similarity, float) else ""
         content = str(chunk.get("content") or "").strip()
-        part = f"[{source_type}: {title} | {module}{score}]\n{content}"
+        part = (
+            f"[{source_type}: {title} | {module} | uploaded_by={uploader} "
+            f"({uploader_role}) | access={accessibility}{score}]\n{content}"
+        )
         if used + len(part) > max_chars:
             break
         parts.append(part)
@@ -144,6 +153,7 @@ def _search_documents_payload(
     filiere_id: str | None = None,
     visibility_scope: str | None = None,
     accessible_filiere_id: str | None = None,
+    accessible_teacher_id: str | None = None,
     user_id: str | None = None,
     filiere: str | None = None,
     file_type: str | None = None,
@@ -158,6 +168,7 @@ def _search_documents_payload(
         filiere_id=filiere_id,
         visibility_scope=visibility_scope,
         accessible_filiere_id=accessible_filiere_id,
+        accessible_teacher_id=accessible_teacher_id,
         user_id=user_id,
         filiere=filiere,
         file_type=file_type,
@@ -220,6 +231,7 @@ def search_course_content(
     course_id: str | None = None,
     filiere_id: str | None = None,
     accessible_filiere_id: str | None = None,
+    accessible_teacher_id: str | None = None,
     filiere: str | None = None,
 ) -> dict[str, Any]:
     """Compatibility tool: search only indexed course documents."""
@@ -232,6 +244,7 @@ def search_course_content(
             module_id=module_id,
             filiere_id=filiere_id,
             accessible_filiere_id=accessible_filiere_id,
+            accessible_teacher_id=accessible_teacher_id,
             filiere=filiere,
         )
     except Exception as exc:
@@ -247,6 +260,7 @@ def search_document_content(
     filiere_id: str | None = None,
     visibility_scope: str | None = None,
     accessible_filiere_id: str | None = None,
+    accessible_teacher_id: str | None = None,
     user_id: str | None = None,
     filiere: str | None = None,
     file_type: str | None = None,
@@ -261,6 +275,7 @@ def search_document_content(
         filiere_id=filiere_id,
         visibility_scope=visibility_scope,
         accessible_filiere_id=accessible_filiere_id,
+        accessible_teacher_id=accessible_teacher_id,
         user_id=user_id,
         filiere=filiere,
         file_type=file_type,

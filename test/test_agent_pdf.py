@@ -2,7 +2,7 @@ from pathlib import Path
 
 from backend.agents.pdf_agent import _infer_report_type, build_pdf_report_sync
 from backend.tasks.pdf_llm_task import build_dynamic_report_spec
-from backend.tools.pdf_tool import build_bulletin_pdf, build_notes_pdf, build_timetable_pdf
+from backend.tools.pdf_tool import _latex_to_readable_text, build_bulletin_pdf, build_notes_pdf, build_timetable_pdf
 
 
 def test_infer_report_type():
@@ -49,6 +49,26 @@ def test_build_timetable_pdf_creates_file():
 
     assert Path(path).exists()
     assert Path(path).suffix == ".pdf"
+
+
+def test_pdf_math_latex_is_converted_to_readable_symbols():
+    text = (
+        r"Vecteurs dans \( \mathbb{R}^n \) : "
+        r"\( u \cdot v = \sum u_i v_i \), "
+        r"\( \|u\| = \sqrt{\sum u_i^2} \), "
+        r"\( A \times B \neq B \times A \)."
+    )
+
+    rendered = _latex_to_readable_text(text)
+
+    assert r"\(" not in rendered
+    assert r"\mathbb" not in rendered
+    assert r"\sum" not in rendered
+    assert "ℝⁿ" in rendered
+    assert "∑" in rendered
+    assert "√(" in rendered
+    assert "×" in rendered
+    assert "≠" in rendered
 
 
 def test_dynamic_report_spec_is_section_based():
@@ -189,3 +209,35 @@ def test_build_pdf_report_sync_exports_last_timetable_response():
     assert "Contenu disponible" not in section_titles
     assert "Notes" not in section_titles
     assert Path(result["artifact"]["file_path"]).exists()
+
+
+def test_build_pdf_report_sync_de_ca_uses_only_previous_answer():
+    previous = """Voici un résumé du cours de Français (Grammaire & Expression écrite) destiné aux étudiants en Génie Informatique.
+
+---
+
+1. Les Types de phrases
+- Déclarative : énoncer un fait.
+- Interrogative : poser une question.
+
+2. La Ponctuation
+- Le point termine une phrase.
+- La virgule sépare des éléments.
+"""
+
+    result = build_pdf_report_sync(
+        "genere pdf de ca",
+        {"id": "user-1", "first_name": "Salim", "last_name": "Test"},
+        data_context={
+            "rag": {"context": "EMPLOI DU TEMPS 2025/2026 FI - GEER\nLundi: Machines Electriques."},
+            "sources": [{"title": "Emploi de temp", "source_type": "timetable"}],
+        },
+        history=[{"role": "assistant", "content": previous}],
+    )
+
+    report = result["data"]["report"]
+    assert result["ok"] is True
+    assert report["title"] == "Rapport PDF"
+    assert "Emploi de temp" not in str(report)
+    assert "Types de phrases" in str(report)
+    assert "Ponctuation" in str(report)

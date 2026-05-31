@@ -8,6 +8,7 @@ templates like "notes" or "bulletin" as the default behavior.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 
@@ -75,6 +76,11 @@ def _clean_text(text: str, max_chars: int = 9000) -> str:
     return cleaned[:max_chars]
 
 
+def _fold_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value.lower())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
 def _text_section(title: str, content: str, max_chars: int = 9000) -> dict[str, Any] | None:
     cleaned = _clean_text(content, max_chars=max_chars)
     if not cleaned:
@@ -123,13 +129,18 @@ def _clean_export_text(text: str) -> str:
         "emploi du temps",
         "résumé",
         "resume",
+        "résumé",
+        "synthese",
+        "synthèse",
         "|",
         "lundi",
         "mardi",
         "mercredi",
+        "cours",
+        "francais",
     ]
     paragraphs = re.split(r"\n\s*\n", cleaned)
-    while paragraphs and not any(marker in paragraphs[0].lower() for marker in useful_markers):
+    while paragraphs and not any(_fold_text(marker) in _fold_text(paragraphs[0]) for marker in useful_markers):
         paragraphs.pop(0)
     return "\n\n".join(paragraphs).strip()
 
@@ -324,7 +335,7 @@ def build_dynamic_report_spec(
     title = "Rapport PDF"
     if selected_type == "summary":
         title = "Synthese PDF"
-    elif "emploi" in (data_context.get("last_assistant_response") or "").lower():
+    elif "emploi" in _fold_text(data_context.get("last_assistant_response") or ""):
         title = "Rapport - Emploi du temps"
 
     return {

@@ -1,10 +1,16 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { fetchApi } from "@/lib/api";
 import { User } from "@/lib/types";
-import { User as UserIcon, Camera, Save, Mail, Briefcase, Phone, MapPin } from "lucide-react";
+import { User as UserIcon, Camera, Save, Mail, Briefcase, Phone, MapPin, Loader2, BookOpen, GraduationCap } from "lucide-react";
+
+type ProfilePhotoUploadResponse = {
+  ok: boolean;
+  profile: User;
+};
 
 export default function ProfilePage() {
   const { user, setUser } = useAuth();
@@ -13,7 +19,21 @@ export default function ProfilePage() {
   const [address, setAddress] = useState(user?.address || "");
   const [office, setOffice] = useState(user?.office || "");
   const [saving, setSaving] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    void fetchApi<User>("/profile/me")
+      .then((profile) => setUser(profile))
+      .catch(() => undefined);
+  }, [setUser]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPhone(user?.phone || "");
+    setAddress(user?.address || "");
+    setOffice(user?.office || "");
+  }, [user]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,6 +66,36 @@ export default function ProfilePage() {
     }
   };
 
+  const handlePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setMessage("Please select an image file");
+      event.target.value = "";
+      return;
+    }
+
+    setUploadingPhoto(true);
+    setMessage("");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const result = await fetchApi<ProfilePhotoUploadResponse>("/profile/photo", {
+        method: "POST",
+        body: formData,
+      });
+      setUser(result.profile);
+      setMessage("Profile photo updated successfully");
+      setTimeout(() => setMessage(""), 3000);
+    } catch {
+      setMessage("Failed to upload profile photo");
+    } finally {
+      setUploadingPhoto(false);
+      event.target.value = "";
+    }
+  };
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-3xl font-bold text-text mb-8">Account Profile</h1>
@@ -54,14 +104,41 @@ export default function ProfilePage() {
         {/* Left Col: Avatar & Immutable details */}
         <div className="col-span-1">
           <div className="bg-white p-6 rounded-2xl border border-border shadow-sm flex flex-col items-center text-center">
-            <div className="relative group cursor-pointer mb-4">
+            <div className="relative group mb-4">
               <div className="w-32 h-32 bg-primary-light rounded-full border-4 border-white shadow-md flex items-center justify-center overflow-hidden">
-                 <UserIcon size={48} className="text-primary opacity-80" />
-                 {/* Empty overlay for future avatar image */}
+                {user?.photo_url ? (
+                  <img
+                    src={user.photo_url}
+                    alt="Profile photo"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <UserIcon size={48} className="text-primary opacity-80" />
+                )}
               </div>
-              <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                 <Camera className="text-white" size={24} />
-              </div>
+              {canEditProfile && (
+                <>
+                  <input
+                    id="profile-photo-input"
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    disabled={uploadingPhoto}
+                    onChange={handlePhotoUpload}
+                  />
+                  <label
+                    htmlFor="profile-photo-input"
+                    className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                    title="Upload profile photo"
+                  >
+                    {uploadingPhoto ? (
+                      <Loader2 className="text-white animate-spin" size={24} />
+                    ) : (
+                      <Camera className="text-white" size={24} />
+                    )}
+                  </label>
+                </>
+              )}
             </div>
             
             <h2 className="text-xl font-bold text-text mb-1">
@@ -75,6 +152,27 @@ export default function ProfilePage() {
                <Mail size={16} className="text-slate-400" />
                <span className="truncate">{user?.email}</span>
             </div>
+            {user?.role === "student" && user.filiere_name && (
+              <div className="w-full mt-4 pt-4 border-t border-slate-100 text-sm text-slate-600 space-y-2">
+                <div className="flex items-center justify-center gap-2">
+                  <GraduationCap size={16} className="text-slate-400" />
+                  <span className="font-semibold">{user.filiere_code} - {user.filiere_name}</span>
+                </div>
+                {user.level_name && <div>{user.level_name}</div>}
+              </div>
+            )}
+            {user?.role === "teacher" && (
+              <div className="w-full mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 gap-3 text-sm">
+                <div className="rounded-lg bg-slate-50 border border-slate-100 p-3">
+                  <div className="text-lg font-bold text-text">{user.assigned_module_count || 0}</div>
+                  <div className="text-xs text-slate-500">Modules</div>
+                </div>
+                <div className="rounded-lg bg-slate-50 border border-slate-100 p-3">
+                  <div className="text-lg font-bold text-text">{user.assigned_filiere_count || 0}</div>
+                  <div className="text-xs text-slate-500">Classes</div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
         
@@ -155,6 +253,47 @@ export default function ProfilePage() {
               </div>
             )}
           </div>
+
+          {(user?.role === "student" || user?.role === "teacher") && (
+            <div className="bg-white p-8 rounded-2xl border border-border shadow-sm mt-6">
+              <h3 className="text-xl font-bold text-text mb-5 flex items-center gap-2">
+                <BookOpen size={20} className="text-primary" /> Assignments
+              </h3>
+              {user?.role === "teacher" && user.assigned_filieres && user.assigned_filieres.length > 0 && (
+                <div className="mb-5 flex flex-wrap gap-2">
+                  {user.assigned_filieres.map((filiere) => (
+                    <span key={filiere.id} className="px-3 py-1 rounded-md bg-primary-light text-primary text-xs font-semibold border border-primary/10">
+                      {filiere.code} - {filiere.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
+                {(user?.assigned_modules || []).length === 0 ? (
+                  <div className="p-4 text-sm text-text-muted">No assigned modules found.</div>
+                ) : (
+                  (user?.assigned_modules || []).map((module) => {
+                    const teacher = [module.teacher_first_name, module.teacher_last_name].filter(Boolean).join(" ");
+                    return (
+                      <div key={module.id} className="p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                        <div>
+                          <div className="font-semibold text-text">{module.code} - {module.name}</div>
+                          <div className="text-xs text-text-muted">
+                            {module.filiere_name || teacher || "Assigned"}
+                          </div>
+                        </div>
+                        {module.semester && (
+                          <span className="text-xs font-semibold text-slate-600 bg-slate-100 border border-slate-200 rounded-md px-2.5 py-1 w-fit">
+                            Semester {module.semester}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

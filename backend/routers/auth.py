@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 from os import environ
@@ -21,6 +20,7 @@ from backend.models.auth import (
     RefreshRequest,
     TokenResponse,
 )
+from backend.security.passwords import verify_password
 
 ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / "backend" / ".env")
@@ -46,24 +46,7 @@ def _hash_refresh_token(token: str) -> str:
 
 
 def _verify_password(password: str, password_hash: str) -> bool:
-    """Verify an admin-created password hash.
-
-    Supports bcrypt via passlib when installed. A constant-time plain compare is
-    accepted only for development seed placeholders, so local demos keep working.
-    """
-    if password_hash.startswith(("$2a$", "$2b$", "$2y$")):
-        try:
-            from passlib.context import CryptContext
-
-            context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-            return bool(context.verify(password, password_hash))
-        except Exception:
-            return False
-
-    if password_hash.startswith("dev-"):
-        return hmac.compare_digest(password, password_hash)
-
-    return False
+    return verify_password(password, password_hash)
 
 
 def _access_token_for(user: dict[str, Any]) -> str:

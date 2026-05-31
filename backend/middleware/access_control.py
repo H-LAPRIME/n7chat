@@ -103,7 +103,7 @@ def build_access_policy(user: dict[str, Any]) -> dict[str, Any]:
             f"Allowed student_id: {student_id or '(not set)'}.",
             "NEVER return notes, absences, or profile data for any other student.",
             "NEVER reveal another student's name, code, birth_date, phone, address, or gender.",
-            "Public data (modules, events, courses, enseignants, filieres) is accessible.",
+            "Only public or explicitly assigned/audience-scoped modules, events, courses, documents, enseignants, and filieres are accessible.",
             "Enseignant phone numbers must be omitted from answers.",
             "Never reference refresh_tokens, password_hash, or raw users table data.",
         ]
@@ -122,7 +122,7 @@ def build_access_policy(user: dict[str, Any]) -> dict[str, Any]:
         rules = [
             "You may show module data only for modules this teacher is assigned to.",
             "You may show notes/absences only for students in your own modules.",
-            "Public data (events, filieres, departments) is accessible.",
+            "Only public or explicitly assigned/audience-scoped events, courses, documents, filieres, and departments are accessible.",
             "Never show personal student data (phone, address, birth_date) to teachers.",
             "Never reference refresh_tokens or password_hash.",
         ]

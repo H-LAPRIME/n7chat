@@ -34,7 +34,12 @@ async function refreshAccessToken(): Promise<string | null> {
   return data.access_token;
 }
 
-async function openChatStream(conversationId: string, message: string, token: string) {
+async function openChatStream(
+  conversationId: string,
+  message: string,
+  token: string,
+  signal?: AbortSignal
+) {
   return fetch(`${getApiUrl()}/chat/stream`, {
     method: "POST",
     headers: {
@@ -46,20 +51,22 @@ async function openChatStream(conversationId: string, message: string, token: st
       conversation_id: conversationId,
       message,
     }),
+    signal,
   });
 }
 
 export async function* streamChat(
   conversationId: string,
   message: string,
-  token: string
+  token: string,
+  signal?: AbortSignal
 ): AsyncGenerator<StreamChunk> {
-  let response = await openChatStream(conversationId, message, token);
+  let response = await openChatStream(conversationId, message, token, signal);
 
   if (response.status === 401) {
     const refreshedToken = await refreshAccessToken();
     if (refreshedToken) {
-      response = await openChatStream(conversationId, message, refreshedToken);
+      response = await openChatStream(conversationId, message, refreshedToken, signal);
     }
   }
 

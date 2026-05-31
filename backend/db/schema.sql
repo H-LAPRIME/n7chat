@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS students (
   gender VARCHAR(20),
   phone VARCHAR(30),
   address TEXT,
+  photo_url TEXT,
   filiere_id UUID REFERENCES filieres(id) ON DELETE SET NULL,
   level_id UUID REFERENCES levels(id) ON DELETE SET NULL,
   enrollment_year INT,
@@ -114,6 +115,7 @@ CREATE TABLE IF NOT EXISTS enseignants (
   department_id UUID REFERENCES departments(id) ON DELETE SET NULL,
   office VARCHAR(100),
   phone VARCHAR(30),
+  photo_url TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -138,6 +140,8 @@ CREATE TABLE IF NOT EXISTS courses (
   file_url TEXT,
   file_type file_type_enum,
   uploaded_by UUID REFERENCES enseignants(id) ON DELETE SET NULL,
+  visibility_scope VARCHAR(20) DEFAULT 'module',
+  filiere_id UUID REFERENCES filieres(id) ON DELETE SET NULL,
   index_status VARCHAR(20) DEFAULT 'pending',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -247,6 +251,10 @@ CREATE TABLE IF NOT EXISTS document_chunks (
 );
 
 ALTER TABLE courses ADD COLUMN IF NOT EXISTS index_status VARCHAR(20) DEFAULT 'pending';
+ALTER TABLE courses ADD COLUMN IF NOT EXISTS visibility_scope VARCHAR(20) DEFAULT 'module';
+ALTER TABLE courses ADD COLUMN IF NOT EXISTS filiere_id UUID REFERENCES filieres(id) ON DELETE SET NULL;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS photo_url TEXT;
+ALTER TABLE enseignants ADD COLUMN IF NOT EXISTS photo_url TEXT;
 ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS filiere_id UUID REFERENCES filieres(id) ON DELETE SET NULL;
 ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS visibility_scope VARCHAR(20) DEFAULT 'public';
 ALTER TABLE events ADD COLUMN IF NOT EXISTS visibility_scope VARCHAR(20) DEFAULT 'public';

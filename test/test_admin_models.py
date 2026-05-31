@@ -8,6 +8,8 @@ from backend.models.admin import (
     TeacherModuleAssignment,
 )
 from backend.routers import admin
+from backend.security.passwords import verify_password
+from fastapi import HTTPException
 
 
 def test_admin_user_create_accepts_roles():
@@ -64,3 +66,21 @@ def test_admin_people_models_cover_student_and_teacher_profiles():
 
 def test_admin_password_hash_keeps_dev_placeholder():
     assert admin._hash_password("dev-password-hash-change-me") == "dev-password-hash-change-me"
+
+
+def test_admin_password_hash_uses_bcrypt_without_passlib():
+    password_hash = admin._hash_password("plain-password")
+
+    assert password_hash.startswith("$2")
+    assert verify_password("plain-password", password_hash) is True
+    assert verify_password("wrong-password", password_hash) is False
+
+
+def test_admin_password_hash_rejects_password_over_bcrypt_limit():
+    try:
+        admin._hash_password("a" * 73)
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "72 bytes" in str(exc.detail)
+    else:
+        raise AssertionError("Expected HTTPException for password over bcrypt limit")
