@@ -241,3 +241,46 @@ def test_build_pdf_report_sync_de_ca_uses_only_previous_answer():
     assert "Emploi de temp" not in str(report)
     assert "Types de phrases" in str(report)
     assert "Ponctuation" in str(report)
+
+
+def test_course_pdf_report_filters_timetable_sources_and_pdf_meta_text():
+    bad_answer = """D'apres le contexte recupere, voici ce que je peux vous proposer.
+
+Cours d'Algebre Lineaire disponible
+- Espaces vectoriels.
+- Matrices.
+
+Comment generer un resume PDF ?
+- Vous pouvez extraire les sections avec LibreOffice.
+- Le contexte ne fournit pas de fonctionnalite integree.
+"""
+    spec = build_dynamic_report_spec(
+        message="genere rapport pdf resume cour algebre",
+        selected_type="summary",
+        student={"first_name": "Kaim", "last_name": "Harbaoui", "filiere_name": "Mathematiques et Informatique"},
+        data_context={
+            "current_response": bad_answer,
+            "rag": {
+                "context": (
+                    "[course: algebre | Mathematiques et Informatique | uploaded_by=algebre prof]\n"
+                    "AlgÃ¨bre linÃ©aire: espaces vectoriels, matrices, determinants, inverse, valeurs propres.\n\n"
+                    "---\n\n"
+                    "[timetable: Emploi de temp | general]\n"
+                    "Lundi: Probabilites."
+                )
+            },
+            "sources": [
+                {"title": "Emploi de temp", "source_type": "timetable", "source_name": "Emploi de temp"},
+                {"title": "algebre", "source_type": "course", "source_name": "algebre"},
+            ],
+        },
+    )
+
+    rendered = str(spec)
+
+    assert "Comment generer" not in rendered
+    assert "LibreOffice" not in rendered
+    assert "Emploi de temp" not in rendered
+    assert "Probabilites" not in rendered
+    assert "algebre" in rendered.lower()
+    assert spec["sections"][0]["title"] == "Resume du cours"

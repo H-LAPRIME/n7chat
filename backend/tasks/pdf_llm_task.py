@@ -36,6 +36,40 @@ NOISE_PATTERNS = (
     "aucune donnee structuree",
     "aucune donnée structurée",
 )
+PDF_META_NOISE_PATTERNS = (
+    "comment generer",
+    "comment gÃ©nÃ©rer",
+    "si vous souhaitez",
+    "si vous cherchez",
+    "vous pouvez extraire",
+    "libreoffice",
+    "microsoft word",
+    "smallpdf",
+    "ilovepdf",
+    "fonctionnalite integree",
+    "fonctionnalitÃ© intÃ©grÃ©e",
+    "manuellement",
+    "logiciels externes",
+    "besoin d'un document specifique",
+    "besoin d'un document spÃ©cifique",
+)
+REPORT_STOPWORDS = {
+    "genere",
+    "generer",
+    "rapport",
+    "pdf",
+    "resume",
+    "resumer",
+    "synthese",
+    "cours",
+    "cour",
+    "course",
+    "document",
+    "support",
+    "deja",
+    "upload",
+    "uploade",
+}
 
 
 def infer_report_type_task(
@@ -89,8 +123,94 @@ def _text_section(title: str, content: str, max_chars: int = 9000) -> dict[str, 
 
 
 def _has_noise(text: str) -> bool:
-    lowered = text.lower()
-    return any(pattern in lowered for pattern in NOISE_PATTERNS)
+    lowered = _fold_text(text)
+    return any(_fold_text(pattern) in lowered for pattern in (*NOISE_PATTERNS, *PDF_META_NOISE_PATTERNS))
+
+
+def _request_terms(message: str) -> list[str]:
+    folded = _fold_text(message)
+    tokens = re.findall(r"[a-z0-9]+", folded)
+    return [token for token in tokens if len(token) > 2 and token not in REPORT_STOPWORDS]
+
+
+def _is_course_report_request(message: str, sources: list[dict[str, Any]]) -> bool:
+    folded = _fold_text(message)
+    source_types = {_fold_text(source.get("source_type") or source.get("file_type") or "") for source in sources if isinstance(source, dict)}
+    return "course" in source_types and any(word in folded for word in ("cours", "cour", "course", "support", "algebre"))
+
+
+def _source_matches_request(source: dict[str, Any], terms: list[str]) -> bool:
+    if not terms:
+        return True
+    haystack = _fold_text(
+        " ".join(
+            str(source.get(key) or "")
+            for key in (
+                "title",
+                "source_name",
+                "module_name",
+                "module_code",
+                "filiere",
+                "filiere_name",
+                "content",
+            )
+        )
+    )
+    return any(term in haystack for term in terms)
+
+
+def _filter_report_sources(message: str, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not _is_course_report_request(message, sources):
+        return sources
+    terms = _request_terms(message)
+    course_sources = [
+        source
+        for source in sources
+        if isinstance(source, dict)
+        and _fold_text(source.get("source_type") or source.get("file_type") or "") == "course"
+        and _source_matches_request(source, terms)
+    ]
+    return course_sources or [
+        source
+        for source in sources
+        if isinstance(source, dict) and _fold_text(source.get("source_type") or source.get("file_type") or "") == "course"
+    ]
+
+
+def _filter_rag_context_for_sources(context: str, sources: list[dict[str, Any]]) -> str:
+    if not context or not sources:
+        return context
+    source_titles = {
+        _fold_text(source.get("title") or source.get("source_name") or "")
+        for source in sources
+        if isinstance(source, dict)
+    }
+    blocks = re.split(r"\n\s*---\s*\n", context)
+    kept = []
+    for block in blocks:
+        lines = block.splitlines()
+        header = lines[0] if lines else ""
+        folded_header = _fold_text(header)
+        if not header.startswith("["):
+            kept.append(block)
+            continue
+        if any(title and title in folded_header for title in source_titles):
+            kept.append(block)
+    return "\n\n---\n\n".join(kept).strip() or context
+
+
+def _strip_rag_headers(context: str) -> str:
+    lines = []
+    for line in context.splitlines():
+        if line.strip().startswith("[") and "]" in line:
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _has_pdf_meta_noise(text: str) -> bool:
+    folded = _fold_text(text)
+    return any(_fold_text(pattern) in folded for pattern in PDF_META_NOISE_PATTERNS)
 
 
 def _strip_markdown(value: str) -> str:
@@ -294,16 +414,20 @@ def build_dynamic_report_spec(
     rag_context = data_context.get("rag") if isinstance(data_context.get("rag"), dict) else {}
     sql_context = data_context.get("sql") if isinstance(data_context.get("sql"), dict) else {}
     sources = data_context.get("sources") if isinstance(data_context.get("sources"), list) else []
+    sources = _filter_report_sources(message, sources)
 
     name = _student_name(student) or "Etudiant"
     subtitle_parts = [part for part in [_student_filiere(student), _student_level(student)] if part]
     sections: list[dict[str, Any]] = []
 
     answer_text = str(data_context.get("last_assistant_response") or data_context.get("current_response") or "")
-    sections.extend(_sections_from_answer(answer_text))
+    rag_text = _filter_rag_context_for_sources(str(rag_context.get("context") or ""), sources)
+    if not (_is_course_report_request(message, sources) and _has_pdf_meta_noise(answer_text)):
+        sections.extend(_sections_from_answer(answer_text))
 
-    rag_text = str(rag_context.get("context") or "")
-    section = _text_section("Contenu disponible", rag_text)
+    is_course_report = _is_course_report_request(message, sources)
+    section_title = "Resume du cours" if is_course_report else "Contenu disponible"
+    section = _text_section(section_title, _strip_rag_headers(rag_text) if is_course_report else rag_text)
     if section and not sections:
         sections.append(section)
 

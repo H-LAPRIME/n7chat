@@ -133,11 +133,18 @@ def _course_query_terms(message: str) -> list[str]:
 
 def _is_uploaded_course_lookup(message: str, filters: dict[str, Any]) -> bool:
     if (filters.get("source_type") or "").lower() == "course":
-        return True
+        return False
     folded = _fold_text(message)
     has_course_word = any(keyword in folded for keyword in COURSE_MATERIAL_KEYWORDS)
     has_lookup_word = any(keyword in folded for keyword in COURSE_LIST_KEYWORDS)
     return has_course_word and (has_lookup_word or "db" in folded or "base" in folded)
+
+
+def _is_course_material_request(message: str, filters: dict[str, Any]) -> bool:
+    if (filters.get("source_type") or "").lower() == "course":
+        return True
+    folded = _fold_text(message)
+    return any(keyword in folded for keyword in COURSE_MATERIAL_KEYWORDS) and bool(_course_query_terms(message))
 
 
 def _accessible_courses(user: dict[str, Any], message: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -412,12 +419,15 @@ def answer_from_documents_sync(
     scoped_filiere_id = filters.get("filiere_id") or user.get("filiere_id")
     scoped_filiere = filters.get("filiere")
     is_timetable_query = _is_timetable_query(message, filters)
+    is_course_material_request = _is_course_material_request(message, filters) and not is_timetable_query
     explicit_source_type = filters.get("source_type")
-    requested_source_type = explicit_source_type or ("timetable" if is_timetable_query else None)
+    requested_source_type = explicit_source_type or ("timetable" if is_timetable_query else "course" if is_course_material_request else None)
     allow_public_fallback = (
         not explicit_source_type
         or str(explicit_source_type).lower() in PUBLIC_FALLBACK_SOURCE_TYPES
     )
+    if is_course_material_request:
+        allow_public_fallback = False
     role = (user.get("role") or "student").lower()
     teacher_id = user.get("teacher_id") if role == "teacher" else None
     is_course_lookup = _is_uploaded_course_lookup(message, filters)
@@ -544,7 +554,7 @@ def answer_from_documents_sync(
 
     # --- Inject structured modules (Graceful Fallback) ---
     filiere_id = user.get("filiere_id") or user.get("student", {}).get("filiere_id")
-    if filiere_id:
+    if filiere_id and requested_source_type != "course" and not followup_course:
         try:
             modules_data = _tool_result(
                 get_filiere_modules,
